@@ -78,8 +78,72 @@ from . import cli
 from . import typing as ft
 
 # 实现保存上下文所需的对象
+# AppContext 类用于管理应用程序上下文，它包含应用程序的状态信息，
+# 允许你在整个应用程序中共享数据。
 from .ctx import AppContext
+# RequestContext 类用于管理请求上下文，它包含有关当前请求的信息，
+# 如请求对象、响应对象和请求特定的状态。
 from .ctx import RequestContext
+
+# globals 文件通常包含了一些全局变量和对象，
+# 这些全局变量和对象用于在整个应用程序中存储和访问共享的数据。
+from .globals import _cv_app
+from .globals import _cv_request
+from .globals import current_app
+from .globals import g
+from .globals import request
+from .globals import request_ctx
+from .globals import session
+
+# helpers 文件通常包含了一些辅助函数和工具，用于执行各种任务，
+# 例如处理请求、处理 URL、发送响应、管理会话等。
+from .helpers import get_debug_flag
+from .helpers import get_flashed_messages
+from .helpers import get_load_dotenv
+from .helpers import send_from_directory
+
+# sansio 模块是 Flask 框架的核心部分，它提供了处理 HTTP 请求和响应、
+# 路由分发、视图函数调用以及上下文管理等基本功能的实现。
+from .sansio.app import App
+from .sansio.scaffold import _sentinel
+
+# 用于处理会话（Session）的相关代码。
+from .sessions import SecureCookieSessionInterface
+from .sessions import SessionInterface
+
+# signals 文件通常包含用于处理信号和事件的相关代码。
+# 信号和事件是一种机制，用于在特定的代码执行时触发自定义操作。
+from .signals import appcontext_tearing_down
+from .signals import got_request_exception
+from .signals import request_finished
+from .signals import request_started
+from .signals import request_tearing_down
+
+# templating 文件通常包含用于处理模板引擎的相关代码。
+from .templating import Environment
+
+# Request 和 Response 类以及其他相关功能通常用于实现 WSGI 规范。
+# 这些类和功能允许 Flask 应用程序处理 HTTP 请求和生成 HTTP 响应，
+# 从而与任何符合 WSGI 标准的 Web 服务器兼容。
+from .wrappers import Request
+from .wrappers import Response
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
