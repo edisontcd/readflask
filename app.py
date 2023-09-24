@@ -68,7 +68,7 @@ from werkzeug.routing import Rule
 # 监视脚本文件的更改，并在文件更改时自动重新启动应用程序，
 # 以便开发人员可以在不停止服务器的情况下进行代码修改和调试。
 from werkzeug.serving import is_running_from_reloader
-# 构建 HTTP 响应对象。
+# 允许你构建和设置 HTTP 响应的各个部分，以便向客户端发送响应数据。
 from werkzeug.wrappers import Response as BaseResponse
 
 # 命令行应用
@@ -128,7 +128,11 @@ from .templating import Environment
 from .wrappers import Request
 from .wrappers import Response
 
-
+# "pragma: no cover" 是一种代码注释，通常用于测试代码中，
+# 以告诉测试工具不要计算或报告注释标记的代码段的测试覆盖率。
+if t.TYPE_CHECKING:  # pragma: no cover
+    from .testing import FlaskClient
+    from .testing import FlaskCliRunner
 
 
 
