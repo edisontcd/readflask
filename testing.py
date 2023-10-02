@@ -152,16 +152,222 @@ def _get_werkzeug_version() -> str:
 
     return _werkzeug_version
 
+class FlaskClient(Client):
+    """Works like a regular Werkzeug test client but has knowledge about
+    Flask's contexts to defer the cleanup of the request context until
+    the end of a ``with`` block. For general information about how to
+    use this class refer to :class:`werkzeug.test.Client`.
 
+    .. versionchanged:: 0.12
+       `app.test_client()` includes preset default environment, which can be
+       set after instantiation of the `app.test_client()` object in
+       `client.environ_base`.
 
+    Basic usage is outlined in the :doc:`/testing` chapter.
+    """
 
+    application: Flask
 
+    def __init__(self, *args: t.Any, **kwargs: t.Any) -> None:
+        super().__init__(*args, **kwargs)
+        # 这一行代码为类的实例属性 preserve_context 赋了一个初始值 False。
+        # 这个属性用于标志是否要保留上下文。
+        self.preserve_context = False
+        # 为类的实例属性 _new_contexts 赋了一个空列表作为初始值。
+        # 这个属性用于存储新的上下文管理器（context manager）。
+        self._new_contexts: list[t.ContextManager[t.Any]] = []
+        # ExitStack 是 Python 的上下文管理器，用于管理一组上下文管理器，
+        # 可以在退出上下文时自动清理资源。
+        self._context_stack = ExitStack()
+        # 环境变量用于模拟请求的环境。
+        self.environ_base = {
+            "REMOTE_ADDR": "127.0.0.1",
+            "HTTP_USER_AGENT": f"Werkzeug/{_get_werkzeug_version()}",
+        }
 
+    # Python 装饰器，用于定义上下文管理器。它将函数装饰成一个生成器函数，
+    # 使其可以与 with 语句一起使用。
+    @contextmanager
+    def session_transaction(
+        self, *args: t.Any, **kwargs: t.Any
+    ) -> t.Generator[SessionMixin, None, None]:
+        """When used in combination with a ``with`` statement this opens a
+        session transaction.  This can be used to modify the session that
+        the test client uses.  Once the ``with`` block is left the session is
+        stored back.
 
+        ::
 
+            with client.session_transaction() as session:
+                session['value'] = 42
 
+        Internally this is implemented by going through a temporary test
+        request context and since session handling could depend on
+        request variables this function accepts the same arguments as
+        :meth:`~flask.Flask.test_request_context` which are directly
+        passed through.
+        """
 
+        # self._cookies 是一个对象属性，它可能用于存储客户端的 cookies。
+        if self._cookies is None:
+            raise TypeError(
+                "Cookies are disabled. Create a client with 'use_cookies=True'."
+            )
 
+        app = self.application
+        ctx = app.test_request_context(*args, **kwargs)
+        self._add_cookies_to_wsgi(ctx.request.environ)
+
+        # 这是一个上下文管理器的开始，它将进入 Flask 请求上下文（ctx）。
+        with ctx:
+            # 通过应用程序的会话接口 (app.session_interface) 来打开会话。
+            # 返回一个会话对象 (sess)。
+            sess = app.session_interface.open_session(app, ctx.request)
+
+        if sess is None:
+            raise RuntimeError("Session backend did not open a session.")
+
+        # yield 语句将会话对象 (sess) 作为生成器的值返回。这允许在 with 
+        # 语句块中的代码中使用会话对象，例如在测试中对会话进行操作。
+        yield sess
+        # 创建一个应用程序响应对象 (resp)，通常用于在上下文结束后保存会话状态。
+        resp = app.response_class()
+
+        if app.session_interface.is_null_session(sess):
+            return
+
+        # 再次进入 Flask 请求上下文，这次是为了保存会话到响应中。
+        with ctx:
+            app.session_interface.save_session(app, sess, resp)
+
+        # 从响应中更新 cookies。它传递了主机名、请求路径和
+        # 响应头中的 Set-Cookie 部分作为参数。
+        self._update_cookies_from_response(
+            ctx.request.host.partition(":")[0],
+            ctx.request.path,
+            resp.headers.getlist("Set-Cookie"),
+        )
+
+    # 将两个环境对象合并成一个新的环境字典，并在需要时添加额外的调试上下文信息。
+    def _copy_environ(self, other):
+        out = {**self.environ_base, **other}
+
+        if self.preserve_context:
+            out["werkzeug.debug.preserve_context"] = self._new_contexts.append
+
+        return out
+
+    # 创建一个请求对象，它使用 EnvironBuilder 来构建请求的环境，
+    # 并通过合并和复制环境参数来创建请求对象。
+    def _request_from_builder_args(self, args, kwargs):
+        kwargs["environ_base"] = self._copy_environ(kwargs.get("environ_base", {}))
+        builder = EnvironBuilder(self.application, *args, **kwargs)
+
+        try:
+            return builder.get_request()
+        finally:
+            builder.close()
+
+    # 发送测试请求，并根据请求的不同方式创建请求对象。它还负责处理上下文的保留和恢复，
+    # 以确保测试请求的环境隔离。最终，它返回测试响应对象，以供测试用例进一步分析和断言。
+    def open(
+        self,
+        *args: t.Any,
+        buffered: bool = False,
+        follow_redirects: bool = False,
+        **kwargs: t.Any,
+    ) -> TestResponse:
+        if args and isinstance(
+            args[0], (werkzeug.test.EnvironBuilder, dict, BaseRequest)
+        ):
+            if isinstance(args[0], werkzeug.test.EnvironBuilder):
+                builder = copy(args[0])
+                builder.environ_base = self._copy_environ(builder.environ_base or {})
+                request = builder.get_request()
+            elif isinstance(args[0], dict):
+                request = EnvironBuilder.from_environ(
+                    args[0], app=self.application, environ_base=self._copy_environ({})
+                ).get_request()
+            else:
+                # isinstance(args[0], BaseRequest)
+                request = copy(args[0])
+                request.environ = self._copy_environ(request.environ)
+        else:
+            # request is None
+            request = self._request_from_builder_args(args, kwargs)
+
+        # 清除之前保留的上下文，以防止它们在重定向或多个请求中的同一块中保留。
+        self._context_stack.close()
+
+        response = super().open(
+            request,
+            buffered=buffered,
+            follow_redirects=follow_redirects,
+        )
+        response.json_module = self.application.json  # type: ignore[assignment]
+
+        # 通过循环重新推送之前保留的上下文，以确保它们在请求期间保持不变。
+        while self._new_contexts:
+            cm = self._new_contexts.pop()
+            self._context_stack.enter_context(cm)
+
+        return response
+
+    # 用于进入 Flask 客户端的上下文，当进入 with 语句块时，会设置 preserve_context 属性为 True，
+    # 表示当前处于一个客户端上下文中。如果已经在客户端上下文中，则会引发异常以防止嵌套使用客户端。
+    def __enter__(self) -> FlaskClient:
+        if self.preserve_context:
+            raise RuntimeError("Cannot nest client invocations")
+        self.preserve_context = True
+        return self
+
+    # 在退出 Flask 客户端的上下文时，将 preserve_context 属性设置为 False，
+    # 表示客户端上下文已经结束，并且关闭之前保留的上下文，以确保上下文资源得到释放。
+    # 这是一种用于管理上下文的良好做法，以确保资源的正确释放和环境的清理。
+    def __exit__(
+        self,
+        exc_type: type | None,
+        exc_value: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.preserve_context = False
+        self._context_stack.close()
+
+# 用于测试 Flask 应用程序的命令行界面（CLI）命令的测试运行器。
+class FlaskCliRunner(CliRunner):
+    """A :class:`~click.testing.CliRunner` for testing a Flask app's
+    CLI commands. Typically created using
+    :meth:`~flask.Flask.test_cli_runner`. See :ref:`testing-cli`.
+    """
+
+    def __init__(self, app: Flask, **kwargs: t.Any) -> None:
+        self.app = app
+        super().__init__(**kwargs)
+
+    def invoke(  # type: ignore
+        self, cli: t.Any = None, args: t.Any = None, **kwargs: t.Any
+    ) -> t.Any:
+        """Invokes a CLI command in an isolated environment. See
+        :meth:`CliRunner.invoke <click.testing.CliRunner.invoke>` for
+        full method documentation. See :ref:`testing-cli` for examples.
+
+        If the ``obj`` argument is not given, passes an instance of
+        :class:`~flask.cli.ScriptInfo` that knows how to load the Flask
+        app being tested.
+
+        :param cli: Command object to invoke. Default is the app's
+            :attr:`~flask.app.Flask.cli` group.
+        :param args: List of strings to invoke the command with.
+
+        :return: a :class:`~click.testing.Result` object.
+        """
+        if cli is None:
+            cli = self.app.cli  # type: ignore
+
+        if "obj" not in kwargs:
+            kwargs["obj"] = ScriptInfo(create_app=lambda: self.app)
+
+        return super().invoke(cli, args, **kwargs)
 
 
 
