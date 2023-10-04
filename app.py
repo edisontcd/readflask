@@ -134,13 +134,26 @@ if t.TYPE_CHECKING:  # pragma: no cover
     from .testing import FlaskClient
     from .testing import FlaskCliRunner
 
+# 主要作用是在类型提示中提供更具体的信息，以确保只有符合特定类型约束的函数才能
+# 被传递给相应的上下文处理器、清理函数、模板过滤器、模板全局变量或模板测试函数。
+# 这有助于提高代码的类型安全性和可读性。。
+T_shell_context_processor = t.TypeVar(
+    "T_shell_context_processor", bound=ft.ShellContextProcessorCallable
+)
+T_teardown = t.TypeVar("T_teardown", bound=ft.TeardownCallable)
+T_template_filter = t.TypeVar("T_template_filter", bound=ft.TemplateFilterCallable)
+T_template_global = t.TypeVar("T_template_global", bound=ft.TemplateGlobalCallable)
+T_template_test = t.TypeVar("T_template_test", bound=ft.TemplateTestCallable)
 
 
+# timedelta用于执行时间相关的计算
+def _make_timedelta(value: timedelta | int | None) -> timedelta | None:
+    if value is None or isinstance(value, timedelta):
+        return value
 
+    return timedelta(seconds=value)
 
-
-
-
+class Flask(App):
 
 
 
