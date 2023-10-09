@@ -297,6 +297,7 @@ class Flask(App):
 
 
     def __init__(
+        # 构造函数参数列表
         self,
         import_name: str,
         static_url_path: str | None = None,
@@ -341,8 +342,69 @@ class Flask(App):
                 f"{self.static_url_path}/<path:filename>",
                 endpoint="static",
                 host=static_host,
+                # 关键字lambda表示匿名函数，冒号前面的x表示函数参数。
                 view_func=lambda **kw: self_ref().send_static_file(**kw),  # type: ignore # noqa: B950
             )
+
+    # 在发送文件时设置缓存的最大寿命（max_age）。缓存控制是通过 HTTP 头来实现的，
+    # 它告诉浏览器在多长时间内可以使用缓存的文件，而不需要重新请求服务器。
+    # 这可以提高 Web 应用程序的性能和加载速度。
+    def get_send_file_max_age(self, filename: str | None) -> int | None:
+        """Used by :func:`send_file` to determine the ``max_age`` cache
+        value for a given file path if it wasn't passed.
+
+        By default, this returns :data:`SEND_FILE_MAX_AGE_DEFAULT` from
+        the configuration of :data:`~flask.current_app`. This defaults
+        to ``None``, which tells the browser to use conditional requests
+        instead of a timed cache, which is usually preferable.
+
+        Note this is a duplicate of the same method in the Flask
+        class.
+
+        .. versionchanged:: 2.0
+            The default configuration is ``None`` instead of 12 hours.
+
+        .. versionadded:: 0.9
+        """
+        value = current_app.config["SEND_FILE_MAX_AGE_DEFAULT"]
+
+        if value is None:
+            return None
+
+        # 如果 SEND_FILE_MAX_AGE_DEFAULT 的配置值是一个 timedelta 对象（时间间隔），
+        # 则将其转换为秒数并返回。
+        if isinstance(value, timedelta):
+            # total_seconds() 是 Python 中 timedelta 对象的方法，
+            # 用于获取时间间隔（timedelta）的总秒数。
+            return int(value.total_seconds())
+
+        # 如果 SEND_FILE_MAX_AGE_DEFAULT 的配置值是一个整数，则直接返回该整数。
+        return value
+
+    # 用于从 static_folder 目录中提供静态文件的视图函数。
+    def send_static_file(self, filename: str) -> Response:
+        """The view function used to serve files from
+        :attr:`static_folder`. A route is automatically registered for
+        this view at :attr:`static_url_path` if :attr:`static_folder` is
+        set.
+
+        Note this is a duplicate of the same method in the Flask
+        class.
+
+        .. versionadded:: 0.5
+
+        """
+        if not self.has_static_folder:
+            raise RuntimeError("'static_folder' must be set to serve static_files.")
+
+        # send_file only knows to call get_send_file_max_age on the app,
+        # call it here so it works for blueprints too.
+        max_age = self.get_send_file_max_age(filename)
+        # get_send_file_max_age位于helpers.py，
+        return send_from_directory(
+            # cast() 是 Python 中的一个函数，通常用于执行类型转换或强制类型断言。
+            t.cast(str, self.static_folder), filename, max_age=max_age
+        )
 
 
 
