@@ -406,7 +406,99 @@ class Flask(App):
             t.cast(str, self.static_folder), filename, max_age=max_age
         )
 
+    # 打开相对于类的root_path的资源文件以进行读取，root_path包含了应用程序的核心代码和静态资源，
+    # 在应用程序的开发和部署过程中不会频繁变动。
+    # t.IO[t.AnyStr]表示一个可以进行输入/输出操作的对象，可以是字符串或字节串，具体取决于上下文。
+    def open_resource(self, resource: str, mode: str = "rb") -> t.IO[t.AnyStr]:
+        """Open a resource file relative to :attr:`root_path` for
+        reading.
 
+        For example, if the file ``schema.sql`` is next to the file
+        ``app.py`` where the ``Flask`` app is defined, it can be opened
+        with:
+
+        .. code-block:: python
+
+            with app.open_resource("schema.sql") as f:
+                conn.executescript(f.read())
+
+        :param resource: Path to the resource relative to
+            :attr:`root_path`.
+        :param mode: Open the file in this mode. Only reading is
+            supported, valid values are "r" (or "rt") and "rb".
+
+        Note this is a duplicate of the same method in the Flask
+        class.
+
+        """
+        if mode not in {"r", "rt", "rb"}:
+            raise ValueError("Resources can only be opened for reading.")
+
+        # 
+        return open(os.path.join(self.root_path, resource), mode)
+
+    # 用于打开应用程序实例文件夹（instance_path）中的资源文件。
+    # 应用程序实例文件夹，通常用于存储应用程序实例特定的数据和配置文件。
+    # 在一个博客应用中，instance_path 可能用于存储用户上传的文章图片、
+    # 用户配置文件、应用程序日志等。这些文件是在运行时动态创建和修改的。
+    def open_instance_resource(self, resource: str, mode: str = "rb") -> t.IO[t.AnyStr]:
+        """Opens a resource from the application's instance folder
+        (:attr:`instance_path`).  Otherwise works like
+        :meth:`open_resource`.  Instance resources can also be opened for
+        writing.
+
+        :param resource: the name of the resource.  To access resources within
+                         subfolders use forward slashes as separator.
+        :param mode: resource file opening mode, default is 'rb'.
+        """
+        return open(os.path.join(self.instance_path, resource), mode)
+
+    # 设置了一个Jinja2环境，并添加了各种选项，同时将Flask特定的函数和对象
+    # 添加到环境的全局上下文中，以便在模板中使用。
+    # 返回一个 Environment 类的实例，Environment类位于templating.py。
+    def create_jinja_environment(self) -> Environment:
+        """Create the Jinja environment based on :attr:`jinja_options`
+        and the various Jinja-related methods of the app. Changing
+        :attr:`jinja_options` after this will have no effect. Also adds
+        Flask-related globals and filters to the environment.
+
+        .. versionchanged:: 0.11
+           ``Environment.auto_reload`` set in accordance with
+           ``TEMPLATES_AUTO_RELOAD`` configuration option.
+
+        .. versionadded:: 0.5
+        """
+        # 创建一个名为 options 的字典，初始值为 Flask 应用程序对象
+        #（self）的 jinja_options 属性。
+        options = dict(self.jinja_options)
+
+        if "autoescape" not in options:
+            options["autoescape"] = self.select_jinja_autoescape
+
+        if "auto_reload" not in options:
+            auto_reload = self.config["TEMPLATES_AUTO_RELOAD"]
+
+            if auto_reload is None:
+                auto_reload = self.debug
+
+            options["auto_reload"] = auto_reload
+
+        rv = self.jinja_environment(self, **options)
+        # 用于将各种与Flask相关的函数和对象添加到Jinja2环境的全局上下文中，
+        # 从而使它们可以在模板中访问。
+        rv.globals.update(
+            url_for=self.url_for,
+            get_flashed_messages=get_flashed_messages,
+            config=self.config,
+            # request, session and g are normally added with the
+            # context processor for efficiency reasons but for imported
+            # templates we also want the proxies in there.
+            request=request,
+            session=session,
+            g=g,
+        )
+        rv.policies["json.dumps_function"] = self.json.dumps
+        return rv
 
 
 
