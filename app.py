@@ -500,6 +500,81 @@ class Flask(App):
         rv.policies["json.dumps_function"] = self.json.dumps
         return rv
 
+    # 用于为给定的请求创建URL适配器。URL适配器用于处理URL路由和生成，
+    # 它允许应用程序将URL映射到视图函数并根据应用程序中定义的路由生成URL。
+    def create_url_adapter(self, request: Request | None) -> MapAdapter | None:
+        """Creates a URL adapter for the given request. The URL adapter
+        is created at a point where the request context is not yet set
+        up so the request is passed explicitly.
+
+        .. versionadded:: 0.6
+
+        .. versionchanged:: 0.9
+           This can now also be called without a request object when the
+           URL adapter is created for the application context.
+
+        .. versionchanged:: 1.0
+            :data:`SERVER_NAME` no longer implicitly enables subdomain
+            matching. Use :attr:`subdomain_matching` instead.
+        """
+        if request is not None:
+            # If subdomain matching is disabled (the default), use the
+            # default subdomain in all cases. This should be the default
+            # in Werkzeug but it currently does not have that feature.
+            # url_map是一个werkzeug.routing.Map对象，位于sansio/app.py
+            if not self.subdomain_matching:
+                subdomain = self.url_map.default_subdomain or None
+            else:
+                subdomain = None
+
+            return self.url_map.bind_to_environ(
+                request.environ,
+                server_name=self.config["SERVER_NAME"],
+                subdomain=subdomain,
+            )
+        # We need at the very least the server name to be set for this
+        # to work.
+        if self.config["SERVER_NAME"] is not None:
+            return self.url_map.bind(
+                self.config["SERVER_NAME"],
+                script_name=self.config["APPLICATION_ROOT"],
+                url_scheme=self.config["PREFERRED_URL_SCHEME"],
+            )
+
+        return None
+
+    # 引发路由异常。
+    # 确保在Flask应用程序的调试模式下，当路由引发重定向并且请求的HTTP方法适用时，
+    # 不会丢弃请求的主体内容。
+    def raise_routing_exception(self, request: Request) -> t.NoReturn:
+        """Intercept routing exceptions and possibly do something else.
+
+        In debug mode, intercept a routing redirect and replace it with
+        an error if the body will be discarded.
+
+        With modern Werkzeug this shouldn't occur, since it now uses a
+        308 status which tells the browser to resend the method and
+        body.
+
+        .. versionchanged:: 2.1
+            Don't intercept 307 and 308 redirects.
+
+        :meta private:
+        :internal:
+        """
+        if (
+            not self.debug
+            or not isinstance(request.routing_exception, RequestRedirect)
+            or request.routing_exception.code in {307, 308}
+            or request.method in {"GET", "HEAD", "OPTIONS"}
+        ):
+            raise request.routing_exception  # type: ignore
+
+        from .debughelpers import FormDataRoutingRedirect
+
+        raise FormDataRoutingRedirect(request)
+
+
 
 
 
