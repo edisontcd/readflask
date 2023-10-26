@@ -574,6 +574,197 @@ class Flask(App):
 
         raise FormDataRoutingRedirect(request)
 
+    # 更新模板上下文，向模板上下文中添加一些常用的变量。
+    # 有助于模板引擎在生成HTML页面时使用这些数据。
+    # request：当前请求对象，包含有关客户端请求的信息。
+    # session：会话对象，用于在多个请求之间存储数据。
+    # config：应用程序的配置信息。
+    # g：全局变量，通常用于在请求生命周期内存储临时数据。
+    def update_template_context(self, context: dict) -> None:
+        """Update the template context with some commonly used variables.
+        This injects request, session, config and g into the template
+        context as well as everything template context processors want
+        to inject.  Note that the as of Flask 0.6, the original values
+        in the context will not be overridden if a context processor
+        decides to return a value with the same key.
+
+        :param context: the context as a dictionary that is updated in place
+                        to add extra variables.
+        """
+        # 类型提示，names 的预期类型是一个可迭代对象，
+        # 该对象包含字符串 (str) 或 None 值。
+        names: t.Iterable[str | None] = (None,)
+
+        # A template may be rendered outside a request context.
+        # reversed()函数是内置函数，用于反转一个序列的元素。
+        # chain()将多个可迭代对象合并成一个单一的迭代器，顺序地迭代它们的元素。
+        if request:
+            names = chain(names, reversed(request.blueprints))
+
+        # The values passed to render_template take precedence. Keep a
+        # copy to re-apply after all context functions.
+        # 保存模板上下文的原始值
+        orig_ctx = context.copy()
+
+        for name in names:
+            # 位于scaffold.py
+            if name in self.template_context_processors:
+                for func in self.template_context_processors[name]:
+                    context.update(self.ensure_sync(func)())
+
+        context.update(orig_ctx)
+
+    # 用于创建一个包含了应用程序和其他相关变量的上下文字典，
+    # 以便在交互式Shell中可以轻松地访问这些变量。
+    def make_shell_context(self) -> dict:
+        """Returns the shell context for an interactive shell for this
+        application.  This runs all the registered shell context
+        processors.
+
+        .. versionadded:: 0.11
+        """
+        rv = {"app": self, "g": g}
+        # shell_context_processors 位于sansio/app.py
+        # self.shell_context_processors: 
+        #    list[ft.ShellContextProcessorCallable] = []
+        # 定义了一个属性，用于存储 shell 上下文处理器函数的列表。
+        for processor in self.shell_context_processors:
+            rv.update(processor())
+        return rv
+
+    # 在本地服务器上运行应用程序。
+    def run(
+        self,
+        host: str | None = None,
+        port: int | None = None,
+        debug: bool | None = None,
+        load_dotenv: bool = True,
+        **options: t.Any,
+    ) -> None:
+        """Runs the application on a local development server.
+
+        Do not use ``run()`` in a production setting. It is not intended to
+        meet security and performance requirements for a production server.
+        Instead, see :doc:`/deploying/index` for WSGI server recommendations.
+
+        If the :attr:`debug` flag is set the server will automatically reload
+        for code changes and show a debugger in case an exception happened.
+
+        If you want to run the application in debug mode, but disable the
+        code execution on the interactive debugger, you can pass
+        ``use_evalex=False`` as parameter.  This will keep the debugger's
+        traceback screen active, but disable code execution.
+
+        It is not recommended to use this function for development with
+        automatic reloading as this is badly supported.  Instead you should
+        be using the :command:`flask` command line script's ``run`` support.
+
+        .. admonition:: Keep in Mind
+
+           Flask will suppress any server error with a generic error page
+           unless it is in debug mode.  As such to enable just the
+           interactive debugger without the code reloading, you have to
+           invoke :meth:`run` with ``debug=True`` and ``use_reloader=False``.
+           Setting ``use_debugger`` to ``True`` without being in debug mode
+           won't catch any exceptions because there won't be any to
+           catch.
+
+        :param host: the hostname to listen on. Set this to ``'0.0.0.0'`` to
+            have the server available externally as well. Defaults to
+            ``'127.0.0.1'`` or the host in the ``SERVER_NAME`` config variable
+            if present.
+        :param port: the port of the webserver. Defaults to ``5000`` or the
+            port defined in the ``SERVER_NAME`` config variable if present.
+        :param debug: if given, enable or disable debug mode. See
+            :attr:`debug`.
+        :param load_dotenv: Load the nearest :file:`.env` and :file:`.flaskenv`
+            files to set environment variables. Will also change the working
+            directory to the directory containing the first file found.
+        :param options: the options to be forwarded to the underlying Werkzeug
+            server. See :func:`werkzeug.serving.run_simple` for more
+            information.
+
+        .. versionchanged:: 1.0
+            If installed, python-dotenv will be used to load environment
+            variables from :file:`.env` and :file:`.flaskenv` files.
+
+            The :envvar:`FLASK_DEBUG` environment variable will override :attr:`debug`.
+
+            Threaded mode is enabled by default.
+
+        .. versionchanged:: 0.10
+            The default port is now picked from the ``SERVER_NAME``
+            variable.
+        """
+        # Ignore this call so that it doesn't start another server if
+        # the 'flask run' command is used.
+        if os.environ.get("FLASK_RUN_FROM_CLI") == "true":
+            if not is_running_from_reloader():
+                click.secho(
+                    " * Ignoring a call to 'app.run()' that would block"
+                    " the current 'flask' CLI command.\n"
+                    "   Only call 'app.run()' in an 'if __name__ =="
+                    ' "__main__"\' guard.',
+                    fg="red",
+                )
+
+            return
+
+        if get_load_dotenv(load_dotenv):
+            cli.load_dotenv()
+
+            # if set, env var overrides existing value
+            if "FLASK_DEBUG" in os.environ:
+                self.debug = get_debug_flag()
+
+        # debug passed to method overrides all other sources
+        if debug is not None:
+            self.debug = bool(debug)
+
+        server_name = self.config.get("SERVER_NAME")
+        sn_host = sn_port = None
+
+        if server_name:
+            sn_host, _, sn_port = server_name.partition(":")
+
+        if not host:
+            if sn_host:
+                host = sn_host
+            else:
+                host = "127.0.0.1"
+
+        if port or port == 0:
+            port = int(port)
+        elif sn_port:
+            port = int(sn_port)
+        else:
+            port = 5000
+
+        options.setdefault("use_reloader", self.debug)
+        options.setdefault("use_debugger", self.debug)
+        options.setdefault("threaded", True)
+
+        cli.show_server_banner(self.debug, self.name)
+
+        from werkzeug.serving import run_simple
+
+        try:
+            run_simple(t.cast(str, host), port, self, **options)
+        finally:
+            # reset the first request information if the development server
+            # reset normally.  This makes it possible to restart the server
+            # without reloader and that stuff from an interactive shell.
+            self._got_first_request = False
+
+
+
+
+
+
+
+
+
+
 
 
 
