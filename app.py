@@ -699,18 +699,23 @@ class Flask(App):
         # Ignore this call so that it doesn't start another server if
         # the 'flask run' command is used.
         if os.environ.get("FLASK_RUN_FROM_CLI") == "true":
+            # 检查应用程序是否是通过重新加载（reloader）启动的。
             if not is_running_from_reloader():
+                # click.secho() 函数用于在命令行中输出文本。
                 click.secho(
                     " * Ignoring a call to 'app.run()' that would block"
                     " the current 'flask' CLI command.\n"
                     "   Only call 'app.run()' in an 'if __name__ =="
                     ' "__main__"\' guard.',
+                    # fg="red" 是用于控制命令行文本颜色的参数。
                     fg="red",
                 )
 
             return
 
+        # 确定是否应该加载环境变量文件（.env 和 .flaskenv）。
         if get_load_dotenv(load_dotenv):
+            # 加载最近的 .env 和 .flaskenv 文件以设置环境变量。
             cli.load_dotenv()
 
             # if set, env var overrides existing value
@@ -721,10 +726,13 @@ class Flask(App):
         if debug is not None:
             self.debug = bool(debug)
 
+        # 用于确定应用程序在开发服务器上监听的主机和端口。
         server_name = self.config.get("SERVER_NAME")
         sn_host = sn_port = None
 
         if server_name:
+            # str.partition(":") 方法，将 server_name 按照 ":" 分割为三部分，
+            # 即主机名、冒号、端口号。
             sn_host, _, sn_port = server_name.partition(":")
 
         if not host:
@@ -744,11 +752,16 @@ class Flask(App):
         options.setdefault("use_debugger", self.debug)
         options.setdefault("threaded", True)
 
+        # 在命令行中显示服务器的启动横幅（banner）。
+        # 这个横幅通常包含应用程序的名称和调试模式的信息。它用于提醒开发者服务器正在运行。
         cli.show_server_banner(self.debug, self.name)
 
+        # run_simple 是 Werkzeug 库中用于启动服务器的函数。
         from werkzeug.serving import run_simple
 
         try:
+            # 启动服务器，并开始监听指定的主机和端口，处理应用程序的请求。
+            # t.cast(str, host) 是将主机名强制转换为字符串类型。
             run_simple(t.cast(str, host), port, self, **options)
         finally:
             # reset the first request information if the development server
