@@ -769,11 +769,165 @@ class Flask(App):
             # without reloader and that stuff from an interactive shell.
             self._got_first_request = False
 
+    # 创建一个用于测试的客户端对象。
+    def test_client(self, use_cookies: bool = True, **kwargs: t.Any) -> FlaskClient:
+        """Creates a test client for this application.  For information
+        about unit testing head over to :doc:`/testing`.
+
+        Note that if you are testing for assertions or exceptions in your
+        application code, you must set ``app.testing = True`` in order for the
+        exceptions to propagate to the test client.  Otherwise, the exception
+        will be handled by the application (not visible to the test client) and
+        the only indication of an AssertionError or other exception will be a
+        500 status code response to the test client.  See the :attr:`testing`
+        attribute.  For example::
+
+            app.testing = True
+            client = app.test_client()
+
+        The test client can be used in a ``with`` block to defer the closing down
+        of the context until the end of the ``with`` block.  This is useful if
+        you want to access the context locals for testing::
+
+            with app.test_client() as c:
+                rv = c.get('/?vodka=42')
+                assert request.args['vodka'] == '42'
+
+        Additionally, you may pass optional keyword arguments that will then
+        be passed to the application's :attr:`test_client_class` constructor.
+        For example::
+
+            from flask.testing import FlaskClient
+
+            class CustomClient(FlaskClient):
+                def __init__(self, *args, **kwargs):
+                    self._authentication = kwargs.pop("authentication")
+                    super(CustomClient,self).__init__( *args, **kwargs)
+
+            app.test_client_class = CustomClient
+            client = app.test_client(authentication='Basic ....')
+
+        See :class:`~flask.testing.FlaskClient` for more information.
+
+        .. versionchanged:: 0.4
+           added support for ``with`` block usage for the client.
+
+        .. versionadded:: 0.7
+           The `use_cookies` parameter was added as well as the ability
+           to override the client to be used by setting the
+           :attr:`test_client_class` attribute.
+
+        .. versionchanged:: 0.11
+           Added `**kwargs` to support passing additional keyword arguments to
+           the constructor of :attr:`test_client_class`.
+        """
+        cls = self.test_client_class
+        if cls is None:
+            from .testing import FlaskClient as cls
+        return cls(  # type: ignore
+            self, self.response_class, use_cookies=use_cookies, **kwargs
+        )
+
+    # 创建用于测试命令行界面 (CLI) 命令的 CLI 运行器。
+    def test_cli_runner(self, **kwargs: t.Any) -> FlaskCliRunner:
+        """Create a CLI runner for testing CLI commands.
+        See :ref:`testing-cli`.
+
+        Returns an instance of :attr:`test_cli_runner_class`, by default
+        :class:`~flask.testing.FlaskCliRunner`. The Flask app object is
+        passed as the first argument.
+
+        .. versionadded:: 1.0
+        """
+        cls = self.test_cli_runner_class
+
+        if cls is None:
+            from .testing import FlaskCliRunner as cls
+
+        return cls(self, **kwargs)  # type: ignore
 
 
+    # 处理 HTTP 异常的核心方法，它通过查找适当的错误处理程序，调用它，
+    # 并返回处理程序的结果或原始异常，以实现对异常的处理。
+    def handle_http_exception(
+        self, e: HTTPException
+    ) -> HTTPException | ft.ResponseReturnValue:
+        """Handles an HTTP exception.  By default this will invoke the
+        registered error handlers and fall back to returning the
+        exception as response.
+
+        .. versionchanged:: 1.0.3
+            ``RoutingException``, used internally for actions such as
+             slash redirects during routing, is not passed to error
+             handlers.
+
+        .. versionchanged:: 1.0
+            Exceptions are looked up by code *and* by MRO, so
+            ``HTTPException`` subclasses can be handled with a catch-all
+            handler for the base ``HTTPException``.
+
+        .. versionadded:: 0.3
+        """
+        # Proxy exceptions don't have error codes.  We want to always return
+        # those unchanged as errors
+        # 如果传入的 HTTP 异常 e 是代理异常（Proxy exceptions），
+        # 即没有错误代码（code 属性为 None），则直接返回异常 e。
+        if e.code is None:
+            return e
+
+        # 如果 e 是 RoutingException 的实例，它表示在路由过程中触发的操作，
+        # 例如斜杠重定向。在这种情况下，直接返回异常 e，不调用错误处理程序。
+        # RoutingExceptions are used internally to trigger routing
+        # actions, such as slash redirects raising RequestRedirect. They
+        # are not raised or handled in user code.
+        if isinstance(e, RoutingException):
+            return e
+
+        # 通过调用 _find_error_handler 方法查找适当的错误处理程序。
+        # 该方法考虑了异常的错误代码以及请求上下文中的蓝图（blueprints）信息。
+        handler = self._find_error_handler(e, request.blueprints)
+        # 如果没有找到适当的错误处理程序，则直接返回异常 e。
+        if handler is None:
+            return e
+        # 如果找到错误处理程序，则调用 ensure_sync 方法同步执行该处理程序，
+        # 并传递异常 e 作为参数。然后，返回处理程序的返回值。
+        # 确保错误处理程序是同步执行的。这对于与异步代码进行交互或在同步代码中
+        # 使用异步错误处理程序时非常重要。
+        return self.ensure_sync(handler)(e)
 
 
+    # 用于处理用户自定义异常的核心方法。
+    def handle_user_exception(
+        self, e: Exception
+    ) -> HTTPException | ft.ResponseReturnValue:
+        """This method is called whenever an exception occurs that
+        should be handled. A special case is :class:`~werkzeug
+        .exceptions.HTTPException` which is forwarded to the
+        :meth:`handle_http_exception` method. This function will either
+        return a response value or reraise the exception with the same
+        traceback.
 
+        .. versionchanged:: 1.0
+            Key errors raised from request data like ``form`` show the
+            bad key in debug mode rather than a generic bad request
+            message.
+
+        .. versionadded:: 0.7
+        """
+        if isinstance(e, BadRequestKeyError) and (
+            self.debug or self.config["TRAP_BAD_REQUEST_ERRORS"]
+        ):
+            e.show_exception = True
+
+        if isinstance(e, HTTPException) and not self.trap_http_exception(e):
+            return self.handle_http_exception(e)
+
+        handler = self._find_error_handler(e, request.blueprints)
+
+        if handler is None:
+            raise
+
+        return self.ensure_sync(handler)(e)
 
 
 
