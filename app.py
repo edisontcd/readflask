@@ -962,9 +962,17 @@ class Flask(App):
         # sys.exc_info() 是 Python 标准库中 sys 模块提供的方法，
         # 用于获取当前线程的异常信息，返回一个包含三个值的元组 (type, value, traceback)
         exc_info = sys.exc_info()
+        # 在发生请求异常时触发 got_request_exception 信号，
+        # 并将异常对象传递给与该信号关联的所有处理函数。
+        # got_request_exception.send 将触发与该信号关联的所有处理函数。
+        # self是信号发送者，即发送信号的对象。在这里，是 Flask 应用程序对象。
+        # _async_wrapper=self.ensure_sync用于指定信号的异步包装器。
+        # 将异常对象 e 传递给 got_request_exception 信号的处理函数。
         got_request_exception.send(self, _async_wrapper=self.ensure_sync, exception=e)
+        # "PROPAGATE_EXCEPTIONS": 这是配置项的名称，表示是否要传播异常。
         propagate = self.config["PROPAGATE_EXCEPTIONS"]
 
+        # 如果其值为 None，则根据应用程序的测试模式和调试模式来确定是否传播异常。
         if propagate is None:
             propagate = self.testing or self.debug
 
@@ -973,20 +981,45 @@ class Flask(App):
             # raise the passed in exception.
             if exc_info[1] is e:
                 raise
-
+            # 如果在处理当前异常时没有其他异常活动，那么就会重新引发当前异常 e
             raise e
 
         self.log_exception(exc_info)
+        # InternalServerError: 这是 Flask 框架中定义的异常类，表示服务器内部错误。
+        # ResponseReturnValue 是一个类型别名，表示视图函数可以返回的值的范围。
         server_error: InternalServerError | ft.ResponseReturnValue
+        # 创建一个 InternalServerError 实例，并将原始的异常对象 e 作为参数传递给构造函数。
         server_error = InternalServerError(original_exception=e)
+        # sansio/app.py line826
+        # 查找适用于给定异常的错误处理器。
+        # request.blueprints: 这是当前请求所属的蓝图列表。
         handler = self._find_error_handler(server_error, request.blueprints)
 
         if handler is not None:
+            # self.ensure_sync(handler): 这是应用程序对象的方法，
+            # 用于确保错误处理器是同步的（即不是异步的）。
             server_error = self.ensure_sync(handler)(server_error)
 
         return self.finalize_request(server_error, from_error_handler=True)
 
+    # 记录异常的详细信息，以便在日志中进行调试和错误分析。
+    def log_exception(
+        self,
+        exc_info: (tuple[type, BaseException, TracebackType] | tuple[None, None, None]),
+    ) -> None:
+        """Logs an exception.  This is called by :meth:`handle_exception`
+        if debugging is disabled and right before the handler is called.
+        The default implementation logs the exception as error on the
+        :attr:`logger`.
 
+        .. versionadded:: 0.8
+        """
+
+        # 格式化字符串，用于生成日志消息。它包含请求的路径和方法信息，
+        # 以便在日志中标识发生异常的请求。
+        self.logger.error(
+            f"Exception on {request.path} [{request.method}]", exc_info=exc_info
+        )
 
 
 
