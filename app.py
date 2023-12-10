@@ -1022,9 +1022,94 @@ class Flask(App):
         )
 
 
+    # 通过执行这个方法，Flask 应用程序会根据请求的 URL 匹配相应的视图函数或错误处理器，
+    # 并返回相应的响应。这是 Flask 中处理请求的核心方法之一。
+    def dispatch_request(self) -> ft.ResponseReturnValue:
+        """Does the request dispatching.  Matches the URL and returns the
+        return value of the view or error handler.  This does not have to
+        be a response object.  In order to convert the return value to a
+        proper response object, call :func:`make_response`.
+
+        .. versionchanged:: 0.7
+           This no longer does the exception handling, this code was
+           moved to the new :meth:`full_dispatch_request`.
+        """
+        # 获取当前请求对象，request_ctx 是请求上下文对象，request 是当前请求的实例。
+        req = request_ctx.request
+        # 是否存在路由异常
+        if req.routing_exception is not None:
+            self.raise_routing_exception(req)
+        # rule: Rule = ...类型注解，用于指定变量 rule 的类型为 Rule。
+        # req.url_rule: 获取当前请求对象的 URL 规则。
+        rule: Rule = req.url_rule  # type: ignore[assignment]
+        # if we provide automatic options for this URL and the
+        # request came with the OPTIONS method, reply automatically
+        if (
+            getattr(rule, "provide_automatic_options", False)
+            and req.method == "OPTIONS"
+        ):
+            return self.make_default_options_response()
+        # otherwise dispatch to the handler for that endpoint
+        view_args: dict[str, t.Any] = req.view_args  # type: ignore[assignment]
+        return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
 
 
+    # 完成了请求的整个处理过程，包括预处理、派发、异常处理和最终处理。
+    def full_dispatch_request(self) -> Response:
+        """Dispatches the request and on top of that performs request
+        pre and postprocessing as well as HTTP exception catching and
+        error handling.
 
+        .. versionadded:: 0.7
+        """
+        # 表示已经收到了第一个请求。
+        self._got_first_request = True
+
+        try:
+            # request_started 信号，表示请求已经开始。
+            # _async_wrapper 参数用于指定信号处理程序的异步包装器。
+            request_started.send(self, _async_wrapper=self.ensure_sync)
+            # 执行一些预处理操作，例如设置请求上下文或验证请求。
+            rv = self.preprocess_request()
+            if rv is None:
+                rv = self.dispatch_request()
+        except Exception as e:
+            rv = self.handle_user_exception(e)
+        return self.finalize_request(rv)
+
+
+    # 在请求处理的最后阶段完成了对响应对象的最终处理，包括转换、后处理和信号发送。
+    def finalize_request(
+        self,
+        rv: ft.ResponseReturnValue | HTTPException,
+        from_error_handler: bool = False,
+    ) -> Response:
+        """Given the return value from a view function this finalizes
+        the request by converting it into a response and invoking the
+        postprocessing functions.  This is invoked for both normal
+        request dispatching as well as error handlers.
+
+        Because this means that it might be called as a result of a
+        failure a special safe mode is available which can be enabled
+        with the `from_error_handler` flag.  If enabled, failures in
+        response processing will be logged and otherwise ignored.
+
+        :internal:
+        """
+        response = self.make_response(rv)
+        try:
+            # 对响应对象进行进一步的处理，可能包括执行注册的响应后处理函数。
+            response = self.process_response(response)
+            request_finished.send(
+                self, _async_wrapper=self.ensure_sync, response=response
+            )
+        except Exception:
+            if not from_error_handler:
+                raise
+            self.logger.exception(
+                "Request finalizing failed with an error while handling an error"
+            )
+        return response
 
 
 
