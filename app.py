@@ -1112,6 +1112,84 @@ class Flask(App):
         return response
 
 
+    # 允许在子类中进行重写，以改变默认的 OPTIONS 请求响应的行为。
+    def make_default_options_response(self) -> Response:
+        """This method is called to create the default ``OPTIONS`` response.
+        This can be changed through subclassing to change the default
+        behavior of ``OPTIONS`` responses.
+
+        .. versionadded:: 0.7
+        """
+        # 获取当前请求上下文中的 URL 适配器，用于处理当前请求的 URL。
+        adapter = request_ctx.url_adapter
+        # 获取当前请求的 URL 对应的资源允许的 HTTP 方法，例如 GET、POST、PUT 等。
+        methods = adapter.allowed_methods()  # type: ignore[union-attr]
+        # 创建一个空的响应对象，使用 self.response_class 来获取应用程序配置中定义
+        # 的响应类（默认为 werkzeug.wrappers.Response）。
+        rv = self.response_class()
+        # 更新响应对象的允许方法集合，即设置 Allow 头部，告诉客户端服务器支持的 HTTP 方法。
+        rv.allow.update(methods)
+        return rv
+
+
+    # 该方法用于确保函数是同步的，适用于在 WSGI 工作进程中运行的情况。
+    # Flask 2.0 引入了 ensure_sync 方法，这个方法的目的是将异步函数转换为同步函数，
+    # 以便在 WSGI 环境中正常运行。在 WSGI 中，同步函数是直接执行的，
+    # 而异步函数需要使用特定的机制来确保其能够被正确执行和等待。
+    def ensure_sync(self, func: t.Callable) -> t.Callable:
+        """Ensure that the function is synchronous for WSGI workers.
+        Plain ``def`` functions are returned as-is. ``async def``
+        functions are wrapped to run and wait for the response.
+
+        Override this method to change how the app runs async views.
+
+        .. versionadded:: 2.0
+        """
+        if iscoroutinefunction(func):
+            # 如果是协程函数，则调用 self.async_to_sync 方法将协程函数包装为同步函数，
+            # 并返回包装后的函数。
+            return self.async_to_sync(func)
+
+        return func
+
+
+    # 用于将异步协程函数（async def）转换为同步函数。
+    def async_to_sync(
+        self, func: t.Callable[..., t.Coroutine]
+    ) -> t.Callable[..., t.Any]:
+        """Return a sync function that will run the coroutine function.
+
+        .. code-block:: python
+
+            result = app.async_to_sync(func)(*args, **kwargs)
+
+        Override this method to change how the app converts async code
+        to be synchronously callable.
+
+        .. versionadded:: 2.0
+        """
+        # 尝试从 asgiref 模块中导入 async_to_sync 函数，
+        # 该函数用于将异步协程函数转换为同步函数。
+        try:
+            from asgiref.sync import async_to_sync as asgiref_async_to_sync
+        except ImportError:
+            raise RuntimeError(
+                "Install Flask with the 'async' extra in order to use async views."
+            ) from None
+
+        # 返回一个新的同步函数，该函数会运行给定的异步协程函数。
+        # 这样通过调用 app.async_to_sync(func)(*args, **kwargs)，
+        # 可以以同步的方式运行原本是异步的协程函数。
+        return asgiref_async_to_sync(func)
+
+
+
+
+
+
+
+
+
 
 
 
