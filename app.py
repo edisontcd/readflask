@@ -1183,6 +1183,153 @@ class Flask(App):
         return asgiref_async_to_sync(func)
 
 
+    # 用于生成与给定端点（endpoint）和值（values）对应的 URL。
+    def url_for(
+        self,
+        /,
+        endpoint: str,
+        *,
+        _anchor: str | None = None,
+        _method: str | None = None,
+        _scheme: str | None = None,
+        _external: bool | None = None, # 控制生成的 URL 是相对路径还是绝对路径（包含域名和方案）。
+        **values: t.Any,
+    ) -> str:
+        """Generate a URL to the given endpoint with the given values.
+
+        This is called by :func:`flask.url_for`, and can be called
+        directly as well.
+
+        An *endpoint* is the name of a URL rule, usually added with
+        :meth:`@app.route() <route>`, and usually the same name as the
+        view function. A route defined in a :class:`~flask.Blueprint`
+        will prepend the blueprint's name separated by a ``.`` to the
+        endpoint.
+
+        In some cases, such as email messages, you want URLs to include
+        the scheme and domain, like ``https://example.com/hello``. When
+        not in an active request, URLs will be external by default, but
+        this requires setting :data:`SERVER_NAME` so Flask knows what
+        domain to use. :data:`APPLICATION_ROOT` and
+        :data:`PREFERRED_URL_SCHEME` should also be configured as
+        needed. This config is only used when not in an active request.
+
+        Functions can be decorated with :meth:`url_defaults` to modify
+        keyword arguments before the URL is built.
+
+        If building fails for some reason, such as an unknown endpoint
+        or incorrect values, the app's :meth:`handle_url_build_error`
+        method is called. If that returns a string, that is returned,
+        otherwise a :exc:`~werkzeug.routing.BuildError` is raised.
+
+        :param endpoint: The endpoint name associated with the URL to
+            generate. If this starts with a ``.``, the current blueprint
+            name (if any) will be used.
+        :param _anchor: If given, append this as ``#anchor`` to the URL.
+        :param _method: If given, generate the URL associated with this
+            method for the endpoint.
+        :param _scheme: If given, the URL will have this scheme if it
+            is external.
+        :param _external: If given, prefer the URL to be internal
+            (False) or require it to be external (True). External URLs
+            include the scheme and domain. When not in an active
+            request, URLs are external by default.
+        :param values: Values to use for the variable parts of the URL
+            rule. Unknown keys are appended as query string arguments,
+            like ``?a=b&c=d``.
+
+        .. versionadded:: 2.2
+            Moved from ``flask.url_for``, which calls this method.
+        """
+        # 获取当前线程的请求上下文，将其赋值给 req_ctx。如果当前线程没有请求上下文
+        #（例如，在没有请求的情况下调用了 url_for 方法），req_ctx 的值将为 None。
+        # req_ctx = _cv_request.get("some_key", default_value)
+        req_ctx = _cv_request.get(None)
+
+        # 首先检查是否存在请求上下文（req_ctx）。如果存在请求上下文，表示当前正在处理一个请求，
+        # 那么就使用请求上下文的 url_adapter 属性和请求的蓝图（blueprint）信息来生成 URL。
+        if req_ctx is not None:
+            url_adapter = req_ctx.url_adapter
+            blueprint_name = req_ctx.request.blueprint
+
+            # If the endpoint starts with "." and the request matches a
+            # blueprint, the endpoint is relative to the blueprint.
+            if endpoint[:1] == ".":
+                if blueprint_name is not None:
+                    endpoint = f"{blueprint_name}{endpoint}"
+                else:
+                    endpoint = endpoint[1:]
+
+            # When in a request, generate a URL without scheme and
+            # domain by default, unless a scheme is given.
+            if _external is None:
+                _external = _scheme is not None
+        # 如果没有请求上下文，则表示当前不在处理请求，可能是在应用初始化阶段或者在测试环境中。
+        # 在这种情况下，代码会检查是否存在应用上下文（app_ctx）。如果存在应用上下文，
+        # 就使用其 url_adapter 属性；否则，会创建一个新的 URL 适配器。
+        else:
+            app_ctx = _cv_app.get(None)
+
+            # If called by helpers.url_for, an app context is active,
+            # use its url_adapter. Otherwise, app.url_for was called
+            # directly, build an adapter.
+            if app_ctx is not None:
+                url_adapter = app_ctx.url_adapter
+            else:
+                url_adapter = self.create_url_adapter(None)
+
+            if url_adapter is None:
+                raise RuntimeError(
+                    "Unable to build URLs outside an active request"
+                    " without 'SERVER_NAME' configured. Also configure"
+                    " 'APPLICATION_ROOT' and 'PREFERRED_URL_SCHEME' as"
+                    " needed."
+                )
+
+            # When outside a request, generate a URL with scheme and
+            # domain by default.
+            if _external is None:
+                _external = True
+
+        # It is an error to set _scheme when _external=False, in order
+        # to avoid accidental insecure URLs.
+        # 如果要指定 _scheme，通常应该将 _external 设置为 True，以确保生成的 URL 包含方案和域。
+        # 如果设置了 _scheme 但将 _external 设置为 False，则会引发 ValueError，以避免生成不安全的 URL。
+        if _scheme is not None and not _external:
+            raise ValueError("When specifying '_scheme', '_external' must be True.")
+
+        # 用于处理 URL 默认值的方法。在生成 URL 时，有时需要将一些默认值添加到 URL 中。
+        # 这个方法的作用就是将这些默认值注入到 URL 的参数中。
+        self.inject_url_defaults(endpoint, values)
+
+        # 处理 URL 构建的核心逻辑。主要涉及使用 URL 适配器 (url_adapter) 构建 URL，
+        # 处理构建错误，并在有锚点 (_anchor) 的情况下追加锚点。
+        try:
+            # 使用 URL 适配器的 build 方法构建 URL。
+            rv = url_adapter.build(  # type: ignore[union-attr]
+                endpoint,
+                values,
+                method=_method,
+                url_scheme=_scheme,
+                force_external=_external,
+            )
+        # 捕获可能的构建错误，即如果构建失败，抛出 BuildError 异常。
+        except BuildError as error:
+            # 在构建错误的情况下，将其他参数（如锚点、HTTP 方法、URL 方案、
+            # 是否强制生成外部 URL）添加到参数字典 values 中，以便在后续的错误处理中使用。
+            values.update(
+                _anchor=_anchor, _method=_method, _scheme=_scheme, _external=_external
+            )
+            # 调用 handle_url_build_error 方法来处理构建错误。
+            # 这个方法可以由应用程序进行重写以提供自定义的错误处理逻辑。
+            return self.handle_url_build_error(error, endpoint, values)
+
+        if _anchor is not None:
+            _anchor = _url_quote(_anchor, safe="%!#$&'()*+,/:;=?@")
+            rv = f"{rv}#{_anchor}"
+
+        return rv
+
 
 
 
