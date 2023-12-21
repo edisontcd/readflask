@@ -1331,6 +1331,160 @@ class Flask(App):
         return rv
 
 
+    # 将视图函数的返回值转换为 Response 对象。
+    # 接收视图函数的返回值 rv，并将其转换为 Response 对象，最后返回这个 Response 对象。
+    def make_response(self, rv: ft.ResponseReturnValue) -> Response:
+        """Convert the return value from a view function to an instance of
+        :attr:`response_class`.
+
+        :param rv: the return value from the view function. The view function
+            must return a response. Returning ``None``, or the view ending
+            without returning, is not allowed. The following types are allowed
+            for ``view_rv``:
+
+            ``str``
+                A response object is created with the string encoded to UTF-8
+                as the body.
+
+            ``bytes``
+                A response object is created with the bytes as the body.
+
+            ``dict``
+                A dictionary that will be jsonify'd before being returned.
+
+            ``list``
+                A list that will be jsonify'd before being returned.
+
+            ``generator`` or ``iterator``
+                A generator that returns ``str`` or ``bytes`` to be
+                streamed as the response.
+
+            ``tuple``
+                Either ``(body, status, headers)``, ``(body, status)``, or
+                ``(body, headers)``, where ``body`` is any of the other types
+                allowed here, ``status`` is a string or an integer, and
+                ``headers`` is a dictionary or a list of ``(key, value)``
+                tuples. If ``body`` is a :attr:`response_class` instance,
+                ``status`` overwrites the exiting value and ``headers`` are
+                extended.
+
+            :attr:`response_class`
+                The object is returned unchanged.
+
+            other :class:`~werkzeug.wrappers.Response` class
+                The object is coerced to :attr:`response_class`.
+
+            :func:`callable`
+                The function is called as a WSGI application. The result is
+                used to create a response object.
+
+        .. versionchanged:: 2.2
+            A generator will be converted to a streaming response.
+            A list will be converted to a JSON response.
+
+        .. versionchanged:: 1.1
+            A dict will be converted to a JSON response.
+
+        .. versionchanged:: 0.9
+           Previously a tuple was interpreted as the arguments for the
+           response object.
+        """
+
+        # 初始化了两个变量 status 和 headers，将它们都设为 None。
+        status = headers = None
+
+        # unpack tuple returns
+        # 用于处理视图函数的返回值 rv，如果 rv 是一个元组，它会进行解包操作。
+        if isinstance(rv, tuple):
+            len_rv = len(rv)
+
+            # a 3-tuple is unpacked directly
+            if len_rv == 3:
+                rv, status, headers = rv  # type: ignore[misc]
+            # decide if a 2-tuple has status or headers
+            elif len_rv == 2:
+                # 检查元组 rv 的第二个元素是否属于 (Headers, dict, tuple, list) 中的一种。
+                if isinstance(rv[1], (Headers, dict, tuple, list)):
+                    # 等效于rv = rv[0] headers = rv[1]
+                    rv, headers = rv
+                else:
+                    rv, status = rv  # type: ignore[assignment,misc]
+            # other sized tuples are not allowed
+            else:
+                raise TypeError(
+                    "The view function did not return a valid response tuple."
+                    " The tuple must have the form (body, status, headers),"
+                    " (body, status), or (body, headers)."
+                )
+
+        # the body must not be None
+        if rv is None:
+            raise TypeError(
+                f"The view function for {request.endpoint!r} did not"
+                " return a valid response. The function either returned"
+                " None or ended without a return statement."
+            )
+
+        # make sure the body is an instance of the response class
+        # 确保 rv（即视图函数的返回值）是 self.response_class 类型的实例。
+        # 在 Flask 中，self.response_class 默认是 werkzeug.wrappers.Response 类。
+        # 这样可以确保返回的对象是符合预期的响应对象类型。
+        if not isinstance(rv, self.response_class):
+            if isinstance(rv, (str, bytes, bytearray)) or isinstance(rv, _abc_Iterator):
+                # let the response class set the status and headers instead of
+                # waiting to do it manually, so that the class can handle any
+                # special logic
+                rv = self.response_class(
+                    rv,
+                    status=status,
+                    headers=headers,  # type: ignore[arg-type]
+                )
+                status = headers = None
+            elif isinstance(rv, (dict, list)):
+                rv = self.json.response(rv)
+            elif isinstance(rv, BaseResponse) or callable(rv):
+                # evaluate a WSGI callable, or coerce a different response
+                # class to the correct type
+                try:
+                    rv = self.response_class.force_type(
+                        rv,  # type: ignore[arg-type]
+                        request.environ,
+                    )
+                except TypeError as e:
+                    raise TypeError(
+                        f"{e}\nThe view function did not return a valid"
+                        " response. The return type must be a string,"
+                        " dict, list, tuple with headers or status,"
+                        " Response instance, or WSGI callable, but it"
+                        f" was a {type(rv).__name__}."
+                    ).with_traceback(sys.exc_info()[2]) from None
+            else:
+                raise TypeError(
+                    "The view function did not return a valid"
+                    " response. The return type must be a string,"
+                    " dict, list, tuple with headers or status,"
+                    " Response instance, or WSGI callable, but it was a"
+                    f" {type(rv).__name__}."
+                )
+
+        # t.cast 不会执行实际的运行时类型检查或转换。它仅仅是为了在类型检查时提供额外的信息。
+        # 在运行时，Python 仍然会以正常的方式处理 rv。
+        rv = t.cast(Response, rv)
+        # prefer the status if it was provided
+        # 设置响应对象 (rv) 的状态码 (status)，确保响应对象的状态码正确设置。。
+        # 如果 status 不是 None，则表示视图函数返回的响应中包含了自定义的状态码。
+        if status is not None:
+            if isinstance(status, (str, bytes, bytearray)):
+                rv.status = status
+            else:
+                rv.status_code = status
+
+        # extend existing headers with provided headers
+        # 将视图函数返回的响应中包含的自定义头部信息 (headers) 添加到响应对象 (rv) 的头部。
+        if headers:
+            rv.headers.update(headers)  # type: ignore[arg-type]
+
+        return rv
 
 
 
