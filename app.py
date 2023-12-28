@@ -1487,6 +1487,46 @@ class Flask(App):
         return rv
 
 
+    # 用于处理请求的一部分，它在请求被分派到视图函数之前调用。
+    def preprocess_request(self) -> ft.ResponseReturnValue | None:
+        """Called before the request is dispatched. Calls
+        :attr:`url_value_preprocessors` registered with the app and the
+        current blueprint (if any). Then calls :attr:`before_request_funcs`
+        registered with the app and the blueprint.
+
+        If any :meth:`before_request` handler returns a non-None value, the
+        value is handled as if it was the return value from the view, and
+        further request handling is stopped.
+        """
+        # 将当前请求中涉及的蓝图的名称以相反的顺序添加到元组中。
+        # request.blueprints 包含了当前请求所涉及的所有蓝图的名称。
+        # None表示应用程序本身。
+        names = (None, *reversed(request.blueprints))
+
+        for name in names:
+            # 检查当前名称是否有关联的 URL 参数预处理器。
+            if name in self.url_value_preprocessors:
+                # 如果存在与当前名称关联的预处理器函数，就遍历这些函数。
+                for url_func in self.url_value_preprocessors[name]:
+                    # 调用预处理器函数，将当前请求的终点（request.endpoint）和
+                    # 视图参数（request.view_args）作为参数传递给这些函数。
+                    url_func(request.endpoint, request.view_args)
+
+        for name in names:
+            # self.before_request_funcs 是 Flask 应用程序对象中存储
+            # before_request 钩子函数的字典。
+            if name in self.before_request_funcs:
+                # before_func 是一个特定蓝图或应用程序关联的 before_request 钩子函数。
+                for before_func in self.before_request_funcs[name]:
+                    # 用于确保钩子函数是同步执行的，即使它是异步函数。
+                    rv = self.ensure_sync(before_func)()
+
+                    if rv is not None:
+                        return rv
+
+        return None
+
+
 
 
 
