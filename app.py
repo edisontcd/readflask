@@ -1527,6 +1527,98 @@ class Flask(App):
         return None
 
 
+    # 用于在将响应发送到 WSGI 服务器之前对响应对象进行修改。
+    def process_response(self, response: Response) -> Response:
+        """Can be overridden in order to modify the response object
+        before it's sent to the WSGI server.  By default this will
+        call all the :meth:`after_request` decorated functions.
+
+        .. versionchanged:: 0.5
+           As of Flask 0.5 the functions registered for after request
+           execution are called in reverse order of registration.
+
+        :param response: a :attr:`response_class` object.
+        :return: a new response object or the same, has to be an
+                 instance of :attr:`response_class`.
+        """
+        # 获取当前请求上下文对象。
+        # _get_current_object() 是该代理对象的方法，用于获取实际的请求上下文对象。
+        ctx = request_ctx._get_current_object()  # type: ignore[attr-defined]
+
+        # 在请求处理完成后，依次执行注册的after_request函数，
+        # 并将响应对象作为参数传递给这些函数。
+        for func in ctx._after_request_functions:
+            # 使用同步版本的 func 处理 response。表示 ensure_sync(func) 返回的
+            # 是另一个可调用对象，然后使用第二组括号 (response) 对其进行调用。
+            response = self.ensure_sync(func)(response)
+
+        # 用于处理请求后的钩子函数（after request hooks）的部分。
+        # chain 函数用于将多个可迭代对象连接在一起，这里用于遍历蓝图和 None。
+        for name in chain(request.blueprints, (None,)):
+            # 检查当前循环中的 name 是否在应用的 after_request_funcs 中注册了钩子函数。
+            if name in self.after_request_funcs:
+                # 如果有注册的钩子函数，将它们按照注册的相反顺序进行遍历。
+                # reversed 函数用于反转可迭代对象。
+                for func in reversed(self.after_request_funcs[name]):
+                    response = self.ensure_sync(func)(response)
+
+        # 用于处理会话（session）的部分。在请求结束时检查会话是否为 null 会话，
+        # 如果不是，则保存会话状态。这通常发生在用户进行身份验证或会话数据发生变化的情况下。
+        # 通过应用的会话接口检查当前请求的会话对象是否为 null 会话。
+        # Null 会话通常表示用户没有进行身份验证或没有启用会话功能。
+        if not self.session_interface.is_null_session(ctx.session):
+            self.session_interface.save_session(self, ctx.session, response)
+
+        return response
+
+
+    # 用于在请求处理结束后执行一些清理操作。
+    def do_teardown_request(
+        self,
+        # exc：未处理的异常（可选），默认为 _sentinel。
+        exc: BaseException | None = _sentinel,  # type: ignore[assignment]
+    ) -> None:
+        """Called after the request is dispatched and the response is
+        returned, right before the request context is popped.
+
+        This calls all functions decorated with
+        :meth:`teardown_request`, and :meth:`Blueprint.teardown_request`
+        if a blueprint handled the request. Finally, the
+        :data:`request_tearing_down` signal is sent.
+
+        This is called by
+        :meth:`RequestContext.pop() <flask.ctx.RequestContext.pop>`,
+        which may be delayed during testing to maintain access to
+        resources.
+
+        :param exc: An unhandled exception raised while dispatching the
+            request. Detected from the current exception information if
+            not passed. Passed to each teardown function.
+
+        .. versionchanged:: 0.9
+            Added the ``exc`` argument.
+        """
+        # 确保在调用 teardown_request 函数时，exc 参数始终包含有意义的异常信息。
+        # 如果在调用时传递了异常，就使用传递的异常；否则，尝试从 sys.exc_info() 
+        # 中获取当前异常。这样做的原因是在没有传递异常的情况下，
+        # sys.exc_info() 提供了当前线程的异常信息。
+        if exc is _sentinel:
+            exc = sys.exc_info()[1]
+
+        # 遍历所有的蓝图（包括主应用），以及一个额外的 None，
+        # 这样可以确保注册在主应用上的 teardown 函数也会被执行。
+        for name in chain(request.blueprints, (None,)):
+            # 检查当前蓝图（或主应用）是否有注册 teardown 函数。
+            if name in self.teardown_request_funcs:
+                # 遍历已注册的 teardown 函数列表，注意这里使用 reversed 函数，
+                # 表示按照注册的相反顺序执行 teardown 函数。
+                for func in reversed(self.teardown_request_funcs[name]):
+                    # 调用 ensure_sync 方法确保 teardown 函数是同步的，
+                    # 然后将 exc 参数传递给这个 teardown 函数。
+                    self.ensure_sync(func)(exc)
+
+        # request_tearing_down 信号表示请求即将被拆除（tearing down）。
+        request_tearing_down.send(self, _async_wrapper=self.ensure_sync, exc=exc)
 
 
 
