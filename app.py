@@ -1621,6 +1621,211 @@ class Flask(App):
         request_tearing_down.send(self, _async_wrapper=self.ensure_sync, exc=exc)
 
 
+    # 在应用上下文即将被弹出（popped）时调用，目的是在应用上下文即将被弹出时进行清理工作。
+    def do_teardown_appcontext(
+        self,
+        exc: BaseException | None = _sentinel,  # type: ignore[assignment]
+    ) -> None:
+        """Called right before the application context is popped.
+
+        When handling a request, the application context is popped
+        after the request context. See :meth:`do_teardown_request`.
+
+        This calls all functions decorated with
+        :meth:`teardown_appcontext`. Then the
+        :data:`appcontext_tearing_down` signal is sent.
+
+        This is called by
+        :meth:`AppContext.pop() <flask.ctx.AppContext.pop>`.
+
+        .. versionadded:: 0.9
+        """
+        if exc is _sentinel:
+            exc = sys.exc_info()[1]
+
+
+        # 遍历应用上下文的清理函数（teardown_appcontext），使用 self.ensure_sync 
+        # 包装并调用每个函数。这确保了清理函数的同步执行。
+        for func in reversed(self.teardown_appcontext_funcs):
+            self.ensure_sync(func)(exc)
+
+        # 通知应用上下文即将被拆除。与之前提到的 request_tearing_down 类似，
+        # 这个信号可以用于执行与应用上下文结束相关的操作，如清理数据库连接、关闭文件等。
+        appcontext_tearing_down.send(self, _async_wrapper=self.ensure_sync, exc=exc)
+
+
+    # 用于创建一个应用上下文 (AppContext)。
+    # 应用上下文是 Flask 应用程序在运行时的上下文环境，可以使用 with 语句将其推入堆栈。
+    # 这样做后，current_app 将指向这个应用程序。
+    def app_context(self) -> AppContext:
+        """Create an :class:`~flask.ctx.AppContext`. Use as a ``with``
+        block to push the context, which will make :data:`current_app`
+        point at this application.
+
+        An application context is automatically pushed by
+        :meth:`RequestContext.push() <flask.ctx.RequestContext.push>`
+        when handling a request, and when running a CLI command. Use
+        this to manually create a context outside of these situations.
+
+        ::
+
+            with app.app_context():
+                init_db()
+
+        See :doc:`/appcontext`.
+
+        .. versionadded:: 0.9
+        """
+        return AppContext(self)
+
+
+    # 用于创建一个请求上下文 (RequestContext)，表示一个 WSGI 环境。
+    def request_context(self, environ: dict) -> RequestContext:
+        """Create a :class:`~flask.ctx.RequestContext` representing a
+        WSGI environment. Use a ``with`` block to push the context,
+        which will make :data:`request` point at this request.
+
+        See :doc:`/reqcontext`.
+
+        Typically you should not call this from your own code. A request
+        context is automatically pushed by the :meth:`wsgi_app` when
+        handling a request. Use :meth:`test_request_context` to create
+        an environment and context instead of this method.
+
+        :param environ: a WSGI environment
+        """
+        return RequestContext(self, environ)
+
+
+    # 用于在测试期间创建一个模拟的请求上下文 (RequestContext)。
+    # 它允许你运行使用请求数据的函数，而无需触发完整的请求分发。
+    def test_request_context(self, *args: t.Any, **kwargs: t.Any) -> RequestContext:
+        """Create a :class:`~flask.ctx.RequestContext` for a WSGI
+        environment created from the given values. This is mostly useful
+        during testing, where you may want to run a function that uses
+        request data without dispatching a full request.
+
+        See :doc:`/reqcontext`.
+
+        Use a ``with`` block to push the context, which will make
+        :data:`request` point at the request for the created
+        environment. ::
+
+            with app.test_request_context(...):
+                generate_report()
+
+        When using the shell, it may be easier to push and pop the
+        context manually to avoid indentation. ::
+
+            ctx = app.test_request_context(...)
+            ctx.push()
+            ...
+            ctx.pop()
+
+        Takes the same arguments as Werkzeug's
+        :class:`~werkzeug.test.EnvironBuilder`, with some defaults from
+        the application. See the linked Werkzeug docs for most of the
+        available arguments. Flask-specific behavior is listed here.
+
+        :param path: URL path being requested.
+        :param base_url: Base URL where the app is being served, which
+            ``path`` is relative to. If not given, built from
+            :data:`PREFERRED_URL_SCHEME`, ``subdomain``,
+            :data:`SERVER_NAME`, and :data:`APPLICATION_ROOT`.
+        :param subdomain: Subdomain name to append to
+            :data:`SERVER_NAME`.
+        :param url_scheme: Scheme to use instead of
+            :data:`PREFERRED_URL_SCHEME`.
+        :param data: The request body, either as a string or a dict of
+            form keys and values.
+        :param json: If given, this is serialized as JSON and passed as
+            ``data``. Also defaults ``content_type`` to
+            ``application/json``.
+        :param args: other positional arguments passed to
+            :class:`~werkzeug.test.EnvironBuilder`.
+        :param kwargs: other keyword arguments passed to
+            :class:`~werkzeug.test.EnvironBuilder`.
+        """
+        from .testing import EnvironBuilder
+
+        builder = EnvironBuilder(self, *args, **kwargs)
+
+        try:
+            return self.request_context(builder.get_environ())
+        finally:
+            builder.close()
+
+    # Flask 中的 wsgi_app 方法，它是真正的 WSGI 应用程序。该方法处理了整个请求-响应过程。
+    def wsgi_app(self, environ: dict, start_response: t.Callable) -> t.Any:
+        """The actual WSGI application. This is not implemented in
+        :meth:`__call__` so that middlewares can be applied without
+        losing a reference to the app object. Instead of doing this::
+
+            app = MyMiddleware(app)
+
+        It's a better idea to do this instead::
+
+            app.wsgi_app = MyMiddleware(app.wsgi_app)
+
+        Then you still have the original application object around and
+        can continue to call methods on it.
+
+        .. versionchanged:: 0.7
+            Teardown events for the request and app contexts are called
+            even if an unhandled error occurs. Other events may not be
+            called depending on when an error occurs during dispatch.
+            See :ref:`callbacks-and-errors`.
+
+        :param environ: A WSGI environment.
+        :param start_response: A callable accepting a status code,
+            a list of headers, and an optional exception context to
+            start the response.
+        """
+        # 创建请求上下文 (RequestContext) 对象。
+        # 该对象与给定的 WSGI 环境（environ）相关联。
+        ctx = self.request_context(environ)
+        # error 这个变量的类型可以是 BaseException 或 None，并且初始值为 None。
+        error: BaseException | None = None
+        try:
+            # 尝试推送请求上下文。
+            try:
+                ctx.push()
+                # 调用 full_dispatch_request 处理请求并获取响应。
+                response = self.full_dispatch_request()
+            # 如果在处理请求时发生异常，捕获该异常，并调用 handle_exception 处理异常。
+            except Exception as e:
+                error = e
+                response = self.handle_exception(e)
+            except:  # noqa: B001
+                error = sys.exc_info()[1]
+                raise
+            return response(environ, start_response)
+        # 在 finally 块中，执行一些清理工作。
+        finally:
+            # 如果设置了 "werkzeug.debug.preserve_context"，则将上下文保存下来。
+            if "werkzeug.debug.preserve_context" in environ:
+                environ["werkzeug.debug.preserve_context"](_cv_app.get())
+                environ["werkzeug.debug.preserve_context"](_cv_request.get())
+
+            # 如果发生了错误并且该错误应该被忽略，则将错误设置为 None。
+            if error is not None and self.should_ignore_error(error):
+                error = None
+
+            # 弹出请求上下文。
+            ctx.pop(error)
+
+    # 这个 __call__ 方法定义了 Flask 应用对象是如何被 WSGI 服务器调用的，使其成为一个
+    # WSGI 应用程序。是 Flask 应用对象作为 WSGI 应用程序时的入口点，负责将请求传递给
+    # 实际的请求处理逻辑。
+    # 在这个方法中，实际的请求处理逻辑被委托给了 wsgi_app 方法。
+    # 这种设计的好处在于，它允许应用对象的 wsgi_app 方法被中间件包装，
+    # 从而实现对请求和响应的自定义处理。
+    def __call__(self, environ: dict, start_response: t.Callable) -> t.Any:
+        """The WSGI server calls the Flask application object as the
+        WSGI application. This calls :meth:`wsgi_app`, which can be
+        wrapped to apply middleware.
+        """
+        return self.wsgi_app(environ, start_response)
 
 
 
