@@ -21,7 +21,7 @@ from .sansio.blueprints import BlueprintSetupState as BlueprintSetupState  # noq
 if t.TYPE_CHECKING:  # pragma: no cover
     from .wrappers import Response
 
-
+# Blueprint 继承自 SansioBlueprint，并且扩展了一些方法。
 class Blueprint(SansioBlueprint):
     # 在发送文件时设置缓存的最大寿命（max_age）。缓存控制是通过 HTTP 头来实现的，
     # 它告诉浏览器在多长时间内可以使用缓存的文件，而不需要重新请求服务器。
