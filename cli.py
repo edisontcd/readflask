@@ -67,7 +67,76 @@ if t.TYPE_CHECKING:
 class NoAppException(click.UsageError):
     """Raised if an application cannot be found or loaded."""
 
+# 在给定的模块中找到一个 Flask 应用程序实例，如果找不到或存在歧义，就会引发异常。
+def find_best_app(module):
+    """Given a module instance this tries to find the best possible
+    application in the module or raises an exception.
+    """
 
+    # 引入了 Flask 类，使得在后续代码中可以直接使用 Flask 而不需要写完整的包路径。
+    from . import Flask
+
+    # 尝试从给定的模块中查找 Flask 应用实例。
+    # Search for the most common names first.
+    for attr_name in ("app", "application"):
+        # getattr 是 Python 内置函数，用于从对象中获取指定属性的值。
+        # 从给定的模块 module 中获取属性名为 attr_name 的属性值，如果属性不存在，则返回 None。
+        app = getattr(module, attr_name, None)
+
+        # 检查变量 app 是否是 Flask 类的实例。如果是，就返回该实例，意味着找到了 Flask 应用对象。
+        if isinstance(app, Flask):
+            return app
+
+    # 它通过遍历模块中的所有属性值，找到那些是 Flask 类的实例的对象，并将它们存储在 matches 列表中。
+    # Otherwise find the only object that is a Flask instance.
+    matches = [v for v in module.__dict__.values() if isinstance(v, Flask)]
+
+    # 首先检查是否有一个（且只有一个）Flask 实例。如果找到一个，它将作为最佳匹配返回。
+    # 如果找到多个 Flask 实例，则会引发异常，指示检测到模块中的多个 Flask 应用，
+    # 需要通过指定正确的名称来解决。
+    if len(matches) == 1:
+        return matches[0]
+    elif len(matches) > 1:
+        raise NoAppException(
+            "Detected multiple Flask applications in module"
+            f" '{module.__name__}'. Use '{module.__name__}:name'"
+            " to specify the correct one."
+        )
+
+    # 
+    # Search for app factory functions.
+    for attr_name in ("create_app", "make_app"):
+
+        # getattr 是 Python 内置函数，用于从对象中获取指定属性的值。
+        # 从给定的模块 module 中获取属性名为 attr_name 的属性值，如果属性不存在，则返回 None。
+        app_factory = getattr(module, attr_name, None)
+
+        # 从模块中的工厂函数中找到并返回一个有效的 Flask 实例，或者在找不到有效实例时引发异常。
+        if inspect.isfunction(app_factory):
+            try:
+                app = app_factory()
+
+                if isinstance(app, Flask):
+                    return app
+            except TypeError as e:
+                if not _called_with_wrong_args(app_factory):
+                    raise
+
+                # 在检测到模块中存在工厂函数，但是尝试调用它时出现了 TypeError 异常
+                #（即没有传递所需的参数），于是抛出 NoAppException 异常。
+                raise NoAppException(
+                    f"Detected factory '{attr_name}' in module '{module.__name__}',"
+                    " but could not call it without arguments. Use"
+                    f" '{module.__name__}:{attr_name}(args)'"
+                    " to specify arguments."
+                ) from e
+
+    # 当在模块中找不到有效的 Flask 应用或工厂函数时，抛出 NoAppException 异常。
+    raise NoAppException(
+        "Failed to find Flask application or factory in module"
+        f" '{module.__name__}'. Use '{module.__name__}:name'"
+        " to specify one."
+    )
 
 
 
