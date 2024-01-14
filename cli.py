@@ -103,7 +103,7 @@ def find_best_app(module):
             " to specify the correct one."
         )
 
-    # 
+    
     # Search for app factory functions.
     for attr_name in ("create_app", "make_app"):
 
@@ -112,18 +112,26 @@ def find_best_app(module):
         app_factory = getattr(module, attr_name, None)
 
         # 从模块中的工厂函数中找到并返回一个有效的 Flask 实例，或者在找不到有效实例时引发异常。
+        # 检查 app_factory 是否是一个函数。这是通过 inspect 模块中的 isfunction 函数实现的。
         if inspect.isfunction(app_factory):
             try:
+                # 尝试调用 app_factory 函数，将结果赋值给 app。
                 app = app_factory()
 
+                # if isinstance(app, Flask):：检查 app 是否是 Flask 类的实例。
                 if isinstance(app, Flask):
+                    # 如果调用成功且返回的对象是 Flask 实例，将其返回。
                     return app
+            # 捕获可能发生的 TypeError 异常，并将异常对象赋值给变量 e。
             except TypeError as e:
+                # 检查是否能够判断出 TypeError 是因为函数调用失败而不是由于其他原因。
+                # 如果是因为调用失败，执行以下代码块。
                 if not _called_with_wrong_args(app_factory):
                     raise
 
                 # 在检测到模块中存在工厂函数，但是尝试调用它时出现了 TypeError 异常
                 #（即没有传递所需的参数），于是抛出 NoAppException 异常。
+                # from e：在异常链中引入原始异常，以保留原始的异常信息。
                 raise NoAppException(
                     f"Detected factory '{attr_name}' in module '{module.__name__}',"
                     " but could not call it without arguments. Use"
@@ -139,7 +147,43 @@ def find_best_app(module):
     )
 
 
+# 检查调用一个函数是否因为调用失败而引发了 TypeError 异常，
+# 还是因为工厂函数内部的某些原因引发了错误。
+def _called_with_wrong_args(f):
+    """Check whether calling a function raised a ``TypeError`` because
+    the call failed or because something in the factory raised the
+    error.
 
+    :param f: The function that was called.
+    :return: ``True`` if the call failed.
+    """
+    # sys.exc_info() 函数返回当前线程的异常信息。它返回一个包含三个值的元组：
+    # sys.exc_info()[0] 返回异常类型。
+    # sys.exc_info()[1] 返回异常对象。
+    # sys.exc_info()[2] 返回 traceback 对象。
+    tb = sys.exc_info()[2]
+
+    try:
+        # 通过迭代 traceback 对象的链表，检查每个帧（frame）是否与函数的代码对象相匹配。
+        while tb is not None:
+            # 比较当前迭代的 traceback 节点的帧代码对象是否与函数的代码对象匹配。
+            # 如果匹配，说明在函数中成功调用了。
+            if tb.tb_frame.f_code is f.__code__:
+                # In the function, it was called successfully.
+                # 如果找到匹配的帧，说明函数成功调用，返回 False。
+                return False
+
+            # 如果当前迭代的 traceback 节点没有匹配的帧，移动到链表中的下一个节点。
+            tb = tb.tb_next
+
+        # Didn't reach the function.
+        # 如果遍历整个 traceback 链表都没有找到匹配的帧，说明函数没有成功调用，返回 True。
+        return True
+    finally:
+        # Delete tb to break a circular reference.
+        # https://docs.python.org/2/library/sys.html#sys.exc_info
+        # 删除 traceback 对象，以打破可能存在的循环引用。这是为了确保在函数调用结束后及时释放资源。
+        del tb
 
 
 
