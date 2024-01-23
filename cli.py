@@ -1,7 +1,8 @@
 # 它从 Python 3.7 开始引入，用于提供更好的类型提示功能。
 from __future__ import annotations
 
-# Python 中的一个内置模块，用于处理抽象语法树（Abstract Syntax Trees）
+# Python 中的一个内置模块，用于处理抽象语法树（Abstract Syntax Trees），它提供了一种表示
+# Python 代码结构的方式，将源代码解析为树状结构，每个节点表示代码中的一个语法结构。
 import ast
 
 # Python 标准库中的一个模块，用于访问安装的 Python 包的元数据。
@@ -186,8 +187,104 @@ def _called_with_wrong_args(f):
         del tb
 
 
+# 根据输入的字符串名称，在给定的模块中查找或调用相应的 Flask 应用程序，并返回找到的应用程序实例。
+def find_app_by_string(module, app_name):
+    """Check if the given string is a variable name or a function. Call
+    a function to get the app instance, or return the variable directly.
+    """
+    #检查给定字符串是否为变量名或函数调用。调用函数以获取应用程序实例，或直接返回变量。
+    from . import Flask
 
+    # Parse app_name as a single expression to determine if it's a valid
+    # attribute name or function call.
+    # 解析 app_name 作为单个表达式，以确定它是否是有效的属性名或函数调用。
+    try:
+        # 尝试解析给定的字符串表达式为 AST 表达式，mode="eval" 表示这是一个表达式。
+        expr = ast.parse(app_name.strip(), mode="eval").body
+    # 如果解析失败，会抛出 SyntaxError 异常。
+    except SyntaxError:
+        # 在发生 SyntaxError 异常时，会捕获该异常，并使用 raise NoAppException(...) 
+        # 语句抛出一个 NoAppException 异常，其中包含相应的错误信息，说明解析失败的原因是
+        # 给定的字符串无法解析为属性名或函数调用。
+        raise NoAppException(
+            f"Failed to parse {app_name!r} as an attribute name or function call."
+        # 表示异常的原因是由于语法错误，而不是其他异常，因此异常链中不包含原始的异常信息。
+        ) from None
 
+    # 检查 expr 是否是 AST（抽象语法树）中的 Name 类型。
+    if isinstance(expr, ast.Name):
+        # 如果 expr 是 ast.Name 类型的实例，说明 app_name 是一个简单的变量名，而不是一个函数调用。
+        # 在这种情况下，将 name 设置为变量名，并将 args 和 kwargs 初始化为空列表和空字典。
+        name = expr.id
+        args = []
+        kwargs = {}
+    # 检查 expr 是否是 AST 中的 Call 类型。如果是 Call 类型，说明 app_name 是一个函数调用。
+    elif isinstance(expr, ast.Call):
+        # Ensure the function name is an attribute name only.
+        # 检查函数调用中的函数名是否是一个简单的变量名。如果不是 ast.Name 类型，
+        # 说明函数名不符合要求，抛出 NoAppException 异常。
+        if not isinstance(expr.func, ast.Name):
+            raise NoAppException(
+                f"Function reference must be a simple name: {app_name!r}."
+            )
+
+        name = expr.func.id
+
+        # Parse the positional and keyword arguments as literals.
+        # # 解析位置参数和关键字参数为字面值。
+        try:
+            args = [ast.literal_eval(arg) for arg in expr.args]
+            kwargs = {kw.arg: ast.literal_eval(kw.value) for kw in expr.keywords}
+        except ValueError:
+            # literal_eval gives cryptic error messages, show a generic
+            # message with the full expression instead.
+            # literal_eval 提供了晦涩的错误消息，因此显示一个带有完整表达式的通用消息。
+            raise NoAppException(
+                f"Failed to parse arguments as literal values: {app_name!r}."
+            ) from None
+    else:
+        # 如果既不是 Name 类型也不是 Call 类型，抛出 NoAppException 异常。
+        raise NoAppException(
+            f"Failed to parse {app_name!r} as an attribute name or function call."
+        )
+
+    try:
+        # 尝试获取模块中的属性。
+        attr = getattr(module, name)
+    except AttributeError as e:
+        # 如果属性不存在，抛出 NoAppException 异常。
+        raise NoAppException(
+            f"Failed to find attribute {name!r} in {module.__name__!r}."
+        ) from e
+
+    # If the attribute is a function, call it with any args and kwargs
+    # to get the real application.
+    # 如果属性是函数，调用它以获取真实的应用程序。
+    if inspect.isfunction(attr):
+        try:
+            app = attr(*args, **kwargs)
+        except TypeError as e:
+            if not _called_with_wrong_args(attr):
+                raise
+
+            raise NoAppException(
+                f"The factory {app_name!r} in module"
+                f" {module.__name__!r} could not be called with the"
+                " specified arguments."
+            ) from e
+    else:
+        # 如果属性不是函数，直接将属性赋值给 app。
+        app = attr
+
+    # 如果 app 是 Flask 类型的实例，返回 app。
+    if isinstance(app, Flask):
+        return app
+
+    # 如果 app 不是 Flask 类型的实例，抛出 NoAppException 异常。
+    raise NoAppException(
+        "A valid Flask application was not obtained from"
+        f" '{module.__name__}:{app_name}'."
+    )
 
 
 
