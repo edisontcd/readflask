@@ -286,6 +286,113 @@ def find_app_by_string(module, app_name):
         f" '{module.__name__}:{app_name}'."
     )
 
+# 给定一个文件名，尝试计算Python路径，将其添加到搜索路径并返回实际的模块名。
+def prepare_import(path: str) -> str:
+    """Given a filename this will try to calculate the python path, add it
+    to the search path and return the actual module name that is expected.
+    """
+
+    # # 获取文件的真实路径
+    path = os.path.realpath(path)
+
+    # os.path.splitext 函数分割文件路径，将文件名和文件扩展名分开。
+    fname, ext = os.path.splitext(path)
+    
+    # 如果文件是.py文件，则使用去掉扩展名的路径
+    if ext == ".py":
+        path = fname
+
+    # # 如果文件名是__init__，则使用其所在目录的路径
+    if os.path.basename(path) == "__init__":
+        path = os.path.dirname(path)
+
+    module_name = []
+
+    # move up until outside package structure (no __init__.py)
+    # # 逐层向上移动，直到超出包结构（没有__init__.py文件）
+    while True:
+        # 分割并返回一个包含两个元素的元组，第一个元素是目录部分，第二个元素是文件/目录名部分。
+        path, name = os.path.split(path)
+        module_name.append(name)
+
+        # 检查当前目录是否包含 __init__.py 文件，os.path.join 用于构建完整的路径。
+        if not os.path.exists(os.path.join(path, "__init__.py")):
+            break
+
+    # # 如果搜索路径的第一个元素不是目标路径，将其插入到搜索路径的最前面
+    if sys.path[0] != path:
+        sys.path.insert(0, path)
+
+    # # 返回模块名，通过"."连接并反转列表
+    return ".".join(module_name[::-1])
+
+# @overload: 这是一个装饰器，表示下面的函数签名是一个函数的声明，而不是实际的实现。
+@t.overload
+def locate_app(
+    module_name: str, app_name: str | None, raise_if_not_found: t.Literal[True] = True
+# 函数返回一个 Flask 类型的对象。
+) -> Flask:
+    # ... 表示占位符。
+    ...
+
+@t.overload
+def locate_app(
+    # 这里使用 ... 表示这个参数在声明中是占位符，具体的默认值等可能在下面的实现中给出。
+    module_name: str, app_name: str | None, raise_if_not_found: t.Literal[False] = ...
+    # 函数返回一个 Flask 类型的对象或者 None。
+) -> Flask | None:
+    ...
+
+# 根据给定的参数和逻辑，尝试导入指定的模块，然后根据条件返回相应的 Flask 应用程序实例或者 None。
+def locate_app(
+    module_name: str, app_name: str | None, raise_if_not_found: bool = True
+) -> Flask | None:
+    try:
+        # 使用 __import__ 函数尝试导入指定的模块。
+        __import__(module_name)
+    except ImportError:
+        # Reraise the ImportError if it occurred within the imported module.
+        # Determine this by checking whether the trace has a depth > 1.
+        # 判断异常是否发生在导入的模块内部，通过检查堆栈深度是否大于 1。如果是，重新引发 ImportError。
+        if sys.exc_info()[2].tb_next:  # type: ignore[union-attr]
+            raise NoAppException(
+                f"While importing {module_name!r}, an ImportError was"
+                f" raised:\n\n{traceback.format_exc()}"
+            ) from None
+        # 如果没有在导入的模块内部发生异常，而且 raise_if_not_found 为 True，
+        # 则抛出 NoAppException 异常，表示无法导入指定的模块。
+        elif raise_if_not_found:
+            raise NoAppException(f"Could not import {module_name!r}.") from None
+        # 如果没有在导入的模块内部发生异常，而且 raise_if_not_found 为 False，
+        # 则返回 None，表示导入失败但不引发异常。
+        else:
+            return None
+
+    # 获取导入的模块对象。
+    module = sys.modules[module_name]
+
+    if app_name is None:
+        return find_best_app(module)
+    else:
+        return find_app_by_string(module, app_name)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
