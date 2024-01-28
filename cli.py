@@ -377,8 +377,36 @@ def locate_app(
         return find_app_by_string(module, app_name)
 
 
+# 在一个命令行程序中定义了一个 --version 选项，当使用这个选项时，
+# 会打印出程序依赖的 Python、Flask 和 Werkzeug 的版本信息。
+def get_version(ctx: click.Context, param: click.Parameter, value: t.Any) -> None:
+    # 这里检查是否提供了 --version 标志。如果没有提供或者是在 "resilient parsing" 模式下
+    #（这通常用于自动补全或类似的功能，不处理实际的命令逻辑），函数就不执行任何操作并返回。
+    if not value or ctx.resilient_parsing:
+        return
+
+    flask_version = importlib.metadata.version("flask")
+    werkzeug_version = importlib.metadata.version("werkzeug")
+
+    # 使用 Click 的 echo 函数打印版本信息。这个函数比标准的 print 更适合用在命令行程序中，
+    # 因为它可以处理一些复杂的输出情况，如颜色输出和重定向。
+    click.echo(
+        f"Python {platform.python_version()}\n"
+        f"Flask {flask_version}\n"
+        f"Werkzeug {werkzeug_version}",
+        color=ctx.color,
+    )
+    ctx.exit()
 
 
+version_option = click.Option(
+    ["--version"],
+    help="Show the Flask version.",
+    expose_value=False,
+    callback=get_version,
+    is_flag=True,
+    is_eager=True,
+)
 
 
 
