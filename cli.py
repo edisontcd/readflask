@@ -409,7 +409,41 @@ version_option = click.Option(
 )
 
 
+# 为 Flask 应用和 Click 命令行工具之间的交互提供了一个灵活的桥梁。
+# 通过允许动态地指定 Flask 应用的导入路径或创建函数，它支持更加动态和灵活的应用程序初始化方式。
+class ScriptInfo:
+    """Helper object to deal with Flask applications.  This is usually not
+    necessary to interface with as it's used internally in the dispatching
+    to click.  In future versions of Flask this object will most likely play
+    a bigger role.  Typically it's created automatically by the
+    :class:`FlaskGroup` but you can also manually create it and pass it
+    onwards as click object.
+    """
 
+    def __init__(
+        self,
+        # 用于指定 Flask 应用程序的导入路径。这允许 ScriptInfo 在需要时动态加载 Flask 应用。
+        app_import_path: str | None = None,
+        # 接收 ScriptInfo 作为参数并返回 Flask 应用的实例。这提供了一种灵活的方式来创建 Flask 应用。
+        create_app: t.Callable[..., Flask] | None = None,
+        # 指示是否应该根据环境变量自动设置 Flask 应用的调试标志。
+        set_debug_flag: bool = True,
+    ) -> None:
+        #: Optionally the import path for the Flask application.
+        # 存储 Flask 应用导入路径的属性。
+        self.app_import_path = app_import_path
+        #: Optionally a function that is passed the script info to create
+        #: the instance of the application.
+        # 存储用于创建 Flask 应用实例的回调函数的属性。
+        self.create_app = create_app
+        #: A dictionary with arbitrary data that can be associated with
+        #: this script info.
+        # 用于关联与此 ScriptInfo 实例相关的任意数据。这为存储和传递额外信息提供了便利。
+        self.data: dict[t.Any, t.Any] = {}
+        # 存储一个布尔值，指示是否设置调试标志的属性。
+        self.set_debug_flag = set_debug_flag
+        # 加载的 Flask 应用实例。
+        self._loaded_app: Flask | None = None
 
 
 
