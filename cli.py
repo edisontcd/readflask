@@ -445,9 +445,74 @@ class ScriptInfo:
         # 加载的 Flask 应用实例。
         self._loaded_app: Flask | None = None
 
+    # 加载 Flask 应用程序（如果还没有加载），并返回它。
+    # 如果这个方法被多次调用，它只会返回已经加载的应用程序实例。
+    def load_app(self) -> Flask:
+        """Loads the Flask app (if not yet loaded) and returns it.  Calling
+        this multiple times will just result in the already loaded app to
+        be returned.
+        """
 
+        # 检查 _loaded_app 属性是否已经有了 Flask 应用的实例。
+        # 如果有，就直接返回这个实例，不再进行加载。
+        if self._loaded_app is not None:
+            return self._loaded_app
 
+        # 如果提供了 create_app 函数（即不为 None），则调用这个函数尝试创建Flask应用实例。
+        if self.create_app is not None:
+            app: Flask | None = self.create_app()
+        else:
+            # 如果没有提供 create_app 函数，但提供了应用的导入路径（app_import_path），
+            # 方法会尝试解析这个路径并加载应用。路径可以包含一个冒号分隔的模块路径和应用名称，
+            # 如果只有模块路径，则尝试在该模块中定位应用。
+            if self.app_import_path:
+                path, name = (
+                    # 使用正则表达式 re.split 分割路径和应用名
+                    re.split(r":(?![\\/])", self.app_import_path, maxsplit=1) + [None]
+                )[:2]
+                # 然后通过 prepare_import 函数和 locate_app 函数尝试定位和加载应用。
+                import_name = prepare_import(path)
+                app = locate_app(import_name, name)
+            else:
+                # 如果没有提供导入路径，方法会尝试在当前目录下的wsgi.py或app.py文件中查找Flask应用。
+                for path in ("wsgi.py", "app.py"):
+                    import_name = prepare_import(path)
+                    app = locate_app(import_name, None, raise_if_not_found=False)
 
+                    if app is not None:
+                        break
+        # 如果上述步骤都无法加载或创建Flask应用实例，则抛出NoAppException异常，
+        # 提示无法定位Flask应用。
+        if app is None:
+            raise NoAppException(
+                "Could not locate a Flask application. Use the"
+                " 'flask --app' option, 'FLASK_APP' environment"
+                " variable, or a 'wsgi.py' or 'app.py' file in the"
+                " current directory."
+            )
+        # 如果设置了 set_debug_flag 为 True，则通过 get_debug_flag 函数获取调试标志，
+        # 并设置给加载的 Flask 应用。
+        if self.set_debug_flag:
+            # Update the app's debug flag through the descriptor so that
+            # other values repopulate as well.
+            app.debug = get_debug_flag()
+
+        # 将加载或创建的 Flask 应用实例保存到 _loaded_app 属性中，并返回这个实例。
+        self._loaded_app = app
+        return app
+
+# click.make_pass_decorator 是 Click 库的一个功能，用于创建一个装饰器，
+# 该装饰器在命令行接口（CLI）命令的函数中自动传递定义的对象。
+# 在这个例子中，它用于创建一个装饰器 pass_script_info，
+# 这个装饰器确保 ScriptInfo 类的一个实例会被传递到使用它的命令函数中。
+# ScriptInfo：这是要传递的对象的类。
+# ensure=True：这个参数指定如果当前上下文中不存在 ScriptInfo 的实例，Click 将会自动创建一个实例。
+# 这样，当定义 Flask 应用的 CLI 命令时，可以使用 @pass_script_info 装饰器
+# 来自动获得一个 ScriptInfo 实例，而无需在每个命令中手动创建或传递它。
+pass_script_info = click.make_pass_decorator(ScriptInfo, ensure=True)
+
+# 定义了一个名为 F 的类型变量，它被限定为任何形式的可调用对象，其参数和返回类型是任意的。
+F = t.TypeVar("F", bound=t.Callable[..., t.Any])
 
 
 
