@@ -515,6 +515,42 @@ pass_script_info = click.make_pass_decorator(ScriptInfo, ensure=True)
 F = t.TypeVar("F", bound=t.Callable[..., t.Any])
 
 
+# 定义了一个装饰器函数 with_appcontext，它用于确保被装饰的回调（callback）函数总是在
+# Flask 应用的上下文中执行。这对于编写需要访问 Flask 应用或其配置的自定义命令非常有用。
+# 参数：f: F 表示这个装饰器可以接受任意的可调用对象作为参数，这得益于之前定义的类型变量 F。
+def with_appcontext(f: F) -> F:
+    """Wraps a callback so that it's guaranteed to be executed with the
+    script's application context.
+
+    Custom commands (and their options) registered under ``app.cli`` or
+    ``blueprint.cli`` will always have an app context available, this
+    decorator is not required in that case.
+
+    .. versionchanged:: 2.2
+        The app context is active for subcommands as well as the
+        decorated callback. The app context is always available to
+        ``app.cli`` command and parameter callbacks.
+    """
+
+    # 使用 @click.pass_context 装饰器来传递 Click 的命令行上下文对象。
+    # 这允许装饰器内的函数访问当前命令行调用的上下文。
+    @click.pass_context
+    def decorator(ctx: click.Context, /, *args: t.Any, **kwargs: t.Any) -> t.Any:
+        # 在调用被装饰的函数之前，装饰器会检查 Flask 的 current_app 是否存在。
+        # 如果不存在，它会通过从 Click 的上下文中获取 ScriptInfo 实例并
+        # 调用 load_app 方法来加载 Flask 应用，并随后激活该应用的上下文。
+        if not current_app:
+            app = ctx.ensure_object(ScriptInfo).load_app()
+            ctx.with_resource(app.app_context())
+
+        # 使用 ctx.invoke 方法调用原始函数 f，传递任何位置参数和关键字参数。
+        # 这样做可以保持调用的原始性质，并且允许通过装饰器透传参数。
+        return ctx.invoke(f, *args, **kwargs)
+
+    # 更新装饰器函数的元数据，使之匹配原始函数 f。
+    # 这一步骤是为了确保装饰后的函数在外部看起来仍然像原始函数，包括函数名称、文档字符串等。
+    return update_wrapper(decorator, f)  # type: ignore[return-value]
+
 
 
 
