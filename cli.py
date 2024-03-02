@@ -552,6 +552,62 @@ def with_appcontext(f: F) -> F:
     return update_wrapper(decorator, f)  # type: ignore[return-value]
 
 
+# AppGroup 类是对 Click 的 Group 类的扩展，专门用于 Flask 应用程序。
+# 它修改了 command 和 group 方法的行为，使得通过这个类注册的命令和子命令组
+# 自动使用 with_appcontext 装饰器，从而确保所有的命令都在 Flask 应用上下文中执行。
+class AppGroup(click.Group):
+    """This works similar to a regular click :class:`~click.Group` but it
+    changes the behavior of the :meth:`command` decorator so that it
+    automatically wraps the functions in :func:`with_appcontext`.
+
+    Not to be confused with :class:`FlaskGroup`.
+    """
+
+    # 几乎和 Click 的 Group.command 方法一样，但是它有一个关键的区别：它会自动将回调函数用
+    # with_appcontext 装饰器包装起来，除非通过设置 with_appcontext=False 明确禁用这个行为。
+    def command(  # type: ignore[override]
+        self, *args: t.Any, **kwargs: t.Any
+    ) -> t.Callable[[t.Callable[..., t.Any]], click.Command]:
+        """This works exactly like the method of the same name on a regular
+        :class:`click.Group` but it wraps callbacks in :func:`with_appcontext`
+        unless it's disabled by passing ``with_appcontext=False``.
+        """
+        # 变量决定了是否应该应用 with_appcontext 装饰器。
+        wrap_for_ctx = kwargs.pop("with_appcontext", True)
+
+        def decorator(f: t.Callable[..., t.Any]) -> click.Command:
+            if wrap_for_ctx:
+                # 在将函数 f 包装后，它调用父类的 command 方法来注册包装后的命令。
+                f = with_appcontext(f)
+            return super(AppGroup, self).command(*args, **kwargs)(f)  # type: ignore[no-any-return]
+
+        return decorator
+
+    # group 方法也被修改以自动设置子命令组类为 AppGroup。
+    def group(  # type: ignore[override]
+        self, *args: t.Any, **kwargs: t.Any
+    ) -> t.Callable[[t.Callable[..., t.Any]], click.Group]:
+        """This works exactly like the method of the same name on a regular
+        :class:`click.Group` but it defaults the group class to
+        :class:`AppGroup`.
+        """
+        kwargs.setdefault("cls", AppGroup)
+        return super().group(*args, **kwargs)  # type: ignore[no-any-return]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
