@@ -595,14 +595,114 @@ class AppGroup(click.Group):
         return super().group(*args, **kwargs)  # type: ignore[no-any-return]
 
 
+# 用作 Click 选项的回调函数，目的是根据提供的值设置 Flask 应用的导入路径。
+# ctx：Click 的上下文对象，用于存储和传递命令行命令执行期间的状态。
+# param：触发这个回调函数的 Click 选项对象。
+# value：命令行中指定的选项值，即 Flask 应用的导入路径。
+def _set_app(ctx: click.Context, param: click.Option, value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    # 使用 ctx.ensure_object(ScriptInfo) 确保有一个 ScriptInfo 的实例，
+    # 并将其与当前的 Click 上下文关联。
+    info = ctx.ensure_object(ScriptInfo)
+    info.app_import_path = value
+    return value
 
 
+# 一个定义为 Click 选项的对象，用于在命令行中指定 Flask 应用或工厂函数的导入路径。
+# This option is eager so the app will be available if --help is given.
+# --help is also eager, so --app must be before it in the param list.
+# no_args_is_help bypasses eager processing, so this option must be
+# processed manually in that case to ensure FLASK_APP gets picked up.
+_app_option = click.Option(
+    # 允许用户在命令行中通过 -A 或 --app 选项指定 Flask 应用的导入路径。
+    ["-A", "--app"],
+    metavar="IMPORT",
+    help=(
+        "The Flask application or factory function to load, in the form 'module:name'."
+        " Module can be a dotted import or file path. Name is not required if it is"
+        " 'app', 'application', 'create_app', or 'make_app', and can be 'name(args)' to"
+        " pass arguments."
+    ),
+    is_eager=True,
+    expose_value=False,
+    callback=_set_app,
+)
 
 
+# 作为一个回调函数用于处理当 --debug 或 --no-debug 选项被指定在命令行中时的逻辑。
+def _set_debug(ctx: click.Context, param: click.Option, value: bool) -> bool | None:
+    # If the flag isn't provided, it will default to False. Don't use
+    # that, let debug be set by env in that case.
+    # 检查这个选项值是如何被设置的。
+    source = ctx.get_parameter_source(param.name)  # type: ignore[arg-type]
+
+    # 如果这个选项的值来自默认设置或默认映射（即用户没有在命令行中明确指定这个选项），
+    # 函数将不做任何操作并返回 None。
+    if source is not None and source in (
+        ParameterSource.DEFAULT,
+        ParameterSource.DEFAULT_MAP,
+    ):
+        return None
+
+    # 如果用户确实在命令行中指定了 --debug 或 --no-debug，函数则根据用户的选择通过设置
+    # 环境变量 FLASK_DEBUG 为 "1" 或 "0" 来启用或禁用调试模式。
+    # 这种方式允许在 Flask 应用的早期启动阶段，比如工厂函数中，就可以访问到调试模式的设置。
+    # Set with env var instead of ScriptInfo.load so that it can be
+    # accessed early during a factory function.
+    os.environ["FLASK_DEBUG"] = "1" if value else "0"
+    return value
 
 
+# 这个回调函数被关联到 --debug/--no-debug 选项，使得它能够在解析命令行参数时被自动调用。
+_debug_option = click.Option(
+    ["--debug/--no-debug"],
+    help="Set debug mode.",
+    expose_value=False,
+    callback=_set_debug,
+)
 
 
+# 定义了一个 Click 选项回调函数 _env_file_callback 和一个与之关联的命令行选项 _env_file_option。
+# 这个功能允许用户通过命令行指定一个环境变量文件，从而在 Flask 应用启动前加载这些环境变量。
+def _env_file_callback(
+    ctx: click.Context, param: click.Option, value: str | None
+) -> str | None:
+    if value is None:
+        return None
+
+    import importlib
+
+    try:
+        importlib.import_module("dotenv")
+    except ImportError:
+        raise click.BadParameter(
+            "python-dotenv must be installed to load an env file.",
+            ctx=ctx,
+            param=param,
+        ) from None
+
+    # Don't check FLASK_SKIP_DOTENV, that only disables automatically
+    # loading .env and .flaskenv files.
+    load_dotenv(value)
+    return value
+
+
+# This option is eager so env vars are loaded as early as possible to be
+# used by other options.
+_env_file_option = click.Option(
+    ["-e", "--env-file"],
+    # 指定了选项值应该是一个存在的文件路径，不应该是一个目录。
+    type=click.Path(exists=True, dir_okay=False),
+    # 提供了关于这个选项的帮助信息，说明了它的作用和 python-dotenv 的依赖要求。
+    help="Load environment variables from this file. python-dotenv must be installed.",
+    # 这个选项被标记为急切的，意味着一旦解析到这个选项，它的回调函数会立即执行。
+    # 这是为了确保环境变量尽可能早地被加载，以便它们能够被后续的选项或应用配置使用。
+    is_eager=True,
+    expose_value=False,
+    callback=_env_file_callback,
+)
 
 
 
