@@ -705,6 +705,113 @@ _env_file_option = click.Option(
 )
 
 
+# 它是 AppGroup 类的一个特殊子类，用于支持从配置的 Flask 应用中加载更多命令。
+class FlaskGroup(AppGroup):
+    """Special subclass of the :class:`AppGroup` group that supports
+    loading more commands from the configured Flask app.  Normally a
+    developer does not have to interface with this class but there are
+    some very advanced use cases for which it makes sense to create an
+    instance of this. see :ref:`custom-scripts`.
+
+    :param add_default_commands: if this is True then the default run and
+        shell commands will be added.
+    :param add_version_option: adds the ``--version`` option.
+    :param create_app: an optional callback that is passed the script info and
+        returns the loaded app.
+    :param load_dotenv: Load the nearest :file:`.env` and :file:`.flaskenv`
+        files to set environment variables. Will also change the working
+        directory to the directory containing the first file found.
+    :param set_debug_flag: Set the app's debug flag.
+
+    .. versionchanged:: 2.2
+        Added the ``-A/--app``, ``--debug/--no-debug``, ``-e/--env-file`` options.
+
+    .. versionchanged:: 2.2
+        An app context is pushed when running ``app.cli`` commands, so
+        ``@with_appcontext`` is no longer required for those commands.
+
+    .. versionchanged:: 1.0
+        If installed, python-dotenv will be used to load environment variables
+        from :file:`.env` and :file:`.flaskenv` files.
+    """
+
+    # FlaskGroup 类的构造函数，用于初始化一个 FlaskGroup 实例。
+    def __init__(
+        self,
+        # 添加默认的 run 和 shell 命令。
+        add_default_commands: bool = True,
+        # 一个可选的回调函数，传入脚本信息，并返回加载的 app。
+        create_app: t.Callable[..., Flask] | None = None,
+        # 如果为 True，则添加 --version 选项。
+        add_version_option: bool = True,
+        # 如果为 True，则加载最近的 .env 和 .flaskenv 文件以设置环境变量，
+        # 并更改工作目录到找到的第一个文件所在的目录。
+        load_dotenv: bool = True,
+        # 设置 app 的调试标志。
+        set_debug_flag: bool = True,
+        # 接收任何额外的关键字参数。
+        **extra: t.Any,
+    ) -> None:
+        # 从 extra 字典中取出名为 "params" 的项。如果没有找到，就使用一个空列表作为默认值。
+        # 然后，将其转换为列表，存储在局部变量 params 中。
+        params = list(extra.pop("params", None) or ())
+        # Processing is done with option callbacks instead of a group
+        # callback. This allows users to make a custom group callback
+        # without losing the behavior. --env-file must come first so
+        # that it is eagerly evaluated before --app.
+        # 将 _env_file_option、_app_option 和 _debug_option 这三个选项添加到 params 列表中。
+        params.extend((_env_file_option, _app_option, _debug_option))
+
+        # 如果 add_version_option 为 True，则将 version_option 添加到 params 列表中。
+        if add_version_option:
+            params.append(version_option)
+
+        # 如果 extra 字典中没有 "context_settings" 键，则在 extra 中添加该键，并将其值设为空字典。
+        if "context_settings" not in extra:
+            extra["context_settings"] = {}
+
+        # 在 extra 字典的 "context_settings" 键对应的字典中设置 "auto_envvar_prefix" 的默认值为 "FLASK"。
+        extra["context_settings"].setdefault("auto_envvar_prefix", "FLASK")
+
+        # 调用父类 AppGroup 的构造函数，并将 params 和任何额外的关键字参数传递给它。
+        super().__init__(params=params, **extra)
+
+        # 将构造函数接收的 create_app、load_dotenv 和 set_debug_flag 参数分别赋值给实例变量。
+        self.create_app = create_app
+        self.load_dotenv = load_dotenv
+        self.set_debug_flag = set_debug_flag
+
+        # 如果 add_default_commands 为 True，则向实例添加默认的 run、shell 和 routes 命令。
+        if add_default_commands:
+            self.add_command(run_command)
+            self.add_command(shell_command)
+            self.add_command(routes_command)
+
+        # 初始化一个实例变量 _loaded_plugin_commands，并将其设为 False。
+        # 这个变量可能用于跟踪插件命令是否已经被加载。
+        self._loaded_plugin_commands = False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
