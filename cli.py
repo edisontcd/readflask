@@ -411,6 +411,7 @@ version_option = click.Option(
 
 # 为 Flask 应用和 Click 命令行工具之间的交互提供了一个灵活的桥梁。
 # 通过允许动态地指定 Flask 应用的导入路径或创建函数，它支持更加动态和灵活的应用程序初始化方式。
+# Flask CLI 用于存储和访问应用加载信息的对象。
 class ScriptInfo:
     """Helper object to deal with Flask applications.  This is usually not
     necessary to interface with as it's used internally in the dispatching
@@ -792,10 +793,72 @@ class FlaskGroup(AppGroup):
         self._loaded_plugin_commands = False
 
 
+    # 为Flask应用加载插件命令。
+     def _load_plugin_commands(self) -> None:
+        # 检查 _loaded_plugin_commands 属性的值。如果这个值为 True，
+        # 意味着插件命令已经加载过了，那么方法就直接返回，不再重复加载命令。
+        if self._loaded_plugin_commands:
+            return
+
+        if sys.version_info >= (3, 10):
+            from importlib import metadata
+        else:
+            # Use a backport on Python < 3.10. We technically have
+            # importlib.metadata on 3.8+, but the API changed in 3.10,
+            # so use the backport for consistency.
+            import importlib_metadata as metadata
+
+        # metadata.entry_points() 函数返回一个入口点集合，每个入口点代表了一个可加载的对象。
+        # 对于每个入口点，使用 ep.load() 方法加载它表示的对象（通常是一个函数或类），
+        # 然后调用 self.add_command() 方法将其添加为命令，命令的名称由 ep.name 提供。
+        for ep in metadata.entry_points(group="flask.commands"):
+            self.add_command(ep.load(), ep.name)
+
+        # 将 _loaded_plugin_commands 属性设为 True，表示插件命令已经加载过了，避免将来的重复加载。
+        self._loaded_plugin_commands = True
 
 
+    # 用于在命令行接口 (CLI) 中查找命令。
+    # ctx（click 库的 Context 对象，表示当前的命令行上下文）和 name（要查找的命令的名称）。
+    # 方法返回 click.Command 对象或者在没有找到命令时返回 None。
+    def get_command(self, ctx: click.Context, name: str) -> click.Command | None:
+        # 调用 _load_plugin_commands 方法来加载插件命令。
+        # 这确保了在查找命令之前，所有的插件命令都已经被加载。
+        self._load_plugin_commands()
+        # Look up built-in and plugin commands, which should be
+        # available even if the app fails to load.
+        # 使用 super().get_command(ctx, name) 调用父类的 get_command 方法来查找内置和插件命令。
+        # 如果找到了命令，rv 变量将包含该命令的引用。
+        rv = super().get_command(ctx, name)
 
+        # 如果在内置或插件命令中找到了指定的命令，方法将立即返回该命令。
+        if rv is not None:
+            return rv
 
+        # 确保 ctx（上下文）中存在 ScriptInfo 对象，并将其赋值给变量 info。
+        info = ctx.ensure_object(ScriptInfo)
+
+        # 尝试使用 info.load_app() 方法加载 Flask 应用。如果应用无法加载
+        #（通常是因为没有找到合适的 Flask 应用实例），会抛出 NoAppException 异常，并显示错误信息。
+        # Look up commands provided by the app, showing an error and
+        # continuing if the app couldn't be loaded.
+        try:
+            app = info.load_app()
+        except NoAppException as e:
+            click.secho(f"Error: {e.format_message()}\n", err=True, fg="red")
+            return None
+
+        # Push an app context for the loaded app unless it is already
+        # active somehow. This makes the context available to parameter
+        # and command callbacks without needing @with_appcontext.
+        # 如果当前没有激活的 Flask 应用上下文，或者当前激活的上下文不是我们刚加载的应用，
+        # 那么使用 app.app_context() 创建一个新的应用上下文，并在 ctx 上下文中注册它。
+        # 这使得命令和参数回调可以访问 Flask 应用的上下文而不需要使用 @with_appcontext 装饰器。
+        if not current_app or current_app._get_current_object() is not app:  # type: ignore[attr-defined]
+            ctx.with_resource(app.app_context())
+
+        # 尝试在 Flask 应用提供的命令中查找指定的命令。如果找到了，返回该命令；否则，返回 None。
+        return app.cli.get_command(ctx, name)
 
 
 
