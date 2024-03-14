@@ -861,8 +861,94 @@ class FlaskGroup(AppGroup):
         return app.cli.get_command(ctx, name)
 
 
+    # 定义在 Flask 应用的命令行接口中，用于列出所有可用的命令，
+    # 包括内置命令、插件命令以及由 Flask 应用本身提供的命令。
+    # 接收一个 click.Context 对象作为参数，并返回一个字符串列表，其中包含所有可用命令的名称。
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        # 调用 _load_plugin_commands 方法来加载插件命令。
+        # 这确保在列出命令之前，所有插件提供的命令都已加载。
+        self._load_plugin_commands()
+        # Start with the built-in and plugin commands.
+        # 调用父类的 list_commands 方法来获取内置和插件命令的列表，
+        # 并将这些命令名称存储在一个集合 rv 中，以去除重复项。
+        rv = set(super().list_commands(ctx))
+        # 确保上下文 ctx 中存在 ScriptInfo 对象，并将其赋给变量 info。
+        # ScriptInfo 是 Flask CLI 中用来加载和存储应用相关信息的对象。
+        info = ctx.ensure_object(ScriptInfo)
+
+        # Add commands provided by the app, showing an error and
+        # continuing if the app couldn't be loaded.
+        # 尝试加载 Flask 应用并调用其 CLI 接口的 list_commands 方法来获取应用提供的命令列表，
+        # 然后将这些命令添加到 rv 集合中。如果应用无法加载（抛出 NoAppException），
+        # 则显示错误信息但不中断执行。
+        try:
+            rv.update(info.load_app().cli.list_commands(ctx))
+        except NoAppException as e:
+            # When an app couldn't be loaded, show the error message
+            # without the traceback.
+            click.secho(f"Error: {e.format_message()}\n", err=True, fg="red")
+        # 如果在加载应用或获取命令时发生了其他任何异常，捕获这个异常并显示完整的 traceback，帮助调试问题。
+        except Exception:
+            # When any other errors occurred during loading, show the
+            # full traceback.
+            click.secho(f"{traceback.format_exc()}\n", err=True, fg="red")
+
+        # 将 rv 集合转换成列表，并对其进行排序以保证命令列表的顺序性，最后返回这个列表。
+        return sorted(rv)
+
+    # Flask CLI (命令行界面) 中的一部分，用于创建一个命令行上下文 (click.Context)。
+    # 这个上下文对象在执行命令时提供了许多有用的信息和功能。
+    def make_context(
+        self,
+        info_name: str | None,
+        args: list[str],
+        parent: click.Context | None = None,
+        **extra: t.Any,
+    ) -> click.Context:
+        # Set a flag to tell app.run to become a no-op. If app.run was
+        # not in a __name__ == __main__ guard, it would start the server
+        # when importing, blocking whatever command is being called.
+        # 设置环境变量 FLASK_RUN_FROM_CLI 为 "true"。这个标志告诉 Flask 应用在通过 CLI 启动时，
+        # 即使应用的 run 方法没有被放在 if __name__ == "__main__" 守护下，也不会启动 Flask 开发服务器。
+        # 这避免了在导入 Flask 应用时意外启动服务器，从而阻塞正在调用的命令。
+        os.environ["FLASK_RUN_FROM_CLI"] = "true"
+
+        # Attempt to load .env and .flask env files. The --env-file
+        # option can cause another file to be loaded.
+        if get_load_dotenv(self.load_dotenv):
+            load_dotenv()
+
+        # 如果在 extra 关键字参数或类的 context_settings 属性中没有指定 "obj"，
+        # 则创建一个 ScriptInfo 实例并将其赋给 extra["obj"]。
+        # ScriptInfo 是一个封装了 Flask 应用创建和其他设置的对象。
+        # 这里，它被初始化了 create_app 和 set_debug_flag，这两个属性也是在类的构造函数中设置的。
+        if "obj" not in extra and "obj" not in self.context_settings:
+            extra["obj"] = ScriptInfo(
+                create_app=self.create_app, set_debug_flag=self.set_debug_flag
+            )
+
+        # 调用父类的 make_context 方法，并传入所有接收到的参数和 extra 关键字参数。
+        # 这个调用将创建并返回一个配置好的 click.Context 实例。
+        return super().make_context(info_name, args, parent=parent, **extra)
 
 
+    # Flask 应用的命令行接口（CLI）的一部分，用于解析传递给命令的参数。
+    # 它接受一个 click.Context 对象和一个字符串列表 args 作为参数。
+    # 这个方法的目的是解析这些参数，并返回解析后的参数列表。
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        # 首先检查是否没有提供任何参数（args 列表为空），并且类属性 no_args_is_help 被设置为 True。
+        # 如果这两个条件都满足，表示当没有提供任何参数时，应该显示帮助信息。
+        if not args and self.no_args_is_help:
+            # Attempt to load --env-file and --app early in case they
+            # were given as env vars. Otherwise no_args_is_help will not
+            # see commands from app.cli.
+            # 通过调用 handle_parse_result 方法（传递空的参数和字典）来尝试提前处理这些选项，
+            # 确保相关的环境变量或配置能够被正确地识别和应用。
+            _env_file_option.handle_parse_result(ctx, {}, [])
+            _app_option.handle_parse_result(ctx, {}, [])
+
+        # 根据命令行中提供的参数和定义的命令行选项规则来解析参数。
+        return super().parse_args(ctx, args)
 
 
 
