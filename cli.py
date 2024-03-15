@@ -951,6 +951,94 @@ class FlaskGroup(AppGroup):
         return super().parse_args(ctx, args)
 
 
+# 用于检查一个文件路径是否是另一个路径的祖先。
+# 这可以用于确定在文件系统中，一个目录是否包含另一个目录或文件。
+# 这个函数在处理文件路径和目录结构时非常有用，特别是在需要确认文件或目录间的层级关系时。
+def _path_is_ancestor(path: str, other: str) -> bool:
+    """Take ``other`` and remove the length of ``path`` from it. Then join it
+    to ``path``. If it is the original value, ``path`` is an ancestor of
+    ``other``."""
+    # other[len(path):]从other字符串中移除与path长度相同的前缀部分。
+    # 通过 lstrip(os.sep) 移除结果字符串前面的任何路径分隔符。
+    # os.path.join(path, ...) 将处理后的路径片段添加回 path 前面。
+    # 如果处理和重组后的 other 路径与原始的 other 路径完全相同，
+    # 那么意味着 path 确实是 other 的一个祖先路径，函数返回 True。
+    return os.path.join(path, other[len(path) :].lstrip(os.sep)) == other
+
+
+# 用于加载环境变量从 .env 或 .flaskenv 文件，它按照一定的顺序尝试读取这些文件，以设置环境变量。
+# path 是一个可选参数，指定了一个具体的文件路径来加载，而不是按照默认的搜索顺序来查找。
+# 它可以是字符串类型，或者是符合 os.PathLike 协议的对象。如果不提供 path，
+# 函数会按照顺序查找 .env 和 .flaskenv 文件。
+# 通过这个函数，开发者可以方便地管理和加载应用的配置，而无需硬编码在应用代码中，使配置更灵活、易于管理。
+def load_dotenv(path: str | os.PathLike[str] | None = None) -> bool:
+    """Load "dotenv" files in order of precedence to set environment variables.
+
+    If an env var is already set it is not overwritten, so earlier files in the
+    list are preferred over later files.
+
+    This is a no-op if `python-dotenv`_ is not installed.
+
+    .. _python-dotenv: https://github.com/theskumar/python-dotenv#readme
+
+    :param path: Load the file at this location instead of searching.
+    :return: ``True`` if a file was loaded.
+
+    .. versionchanged:: 2.0
+        The current directory is not changed to the location of the
+        loaded file.
+
+    .. versionchanged:: 2.0
+        When loading the env files, set the default encoding to UTF-8.
+
+    .. versionchanged:: 1.1.0
+        Returns ``False`` when python-dotenv is not installed, or when
+        the given path isn't a file.
+
+    .. versionadded:: 1.0
+    """
+    try:
+        # 首先尝试导入 dotenv 模块。
+        import dotenv
+    # 如果导入失败（ImportError），则表示 python-dotenv 库未安装。
+    except ImportError:
+        # 如果存在 .env 或 .flaskenv 文件，但 python-dotenv 未安装，会打印提示信息，
+        # 建议安装 python-dotenv，并返回 False。
+        if path or os.path.isfile(".env") or os.path.isfile(".flaskenv"):
+            click.secho(
+                " * Tip: There are .env or .flaskenv files present."
+                ' Do "pip install python-dotenv" to use them.',
+                fg="yellow",
+                err=True,
+            )
+
+        return False
+
+    # 如果 path 参数被指定且该路径指向的文件存在，函数会尝试仅加载这个文件，
+    # 并立即返回结果。如果文件不存在，则返回 False。
+    # Always return after attempting to load a given path, don't load
+    # the default files.
+    if path is not None:
+        if os.path.isfile(path):
+            return dotenv.load_dotenv(path, encoding="utf-8")
+
+        return False
+
+    loaded = False
+
+    # 如果没有指定 path，函数会按顺序查找 .env 和 .flaskenv 文件。
+    # 对于找到的每个文件，使用 UTF-8 编码加载它。
+    # 如果至少加载了一个文件，loaded 变量会被设置为 True。
+    for name in (".env", ".flaskenv"):
+        path = dotenv.find_dotenv(name, usecwd=True)
+
+        if not path:
+            continue
+
+        dotenv.load_dotenv(path, encoding="utf-8")
+        loaded = True
+
+    return loaded  # True if at least one file was located and loaded.
 
 
 
