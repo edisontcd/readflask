@@ -1041,10 +1041,83 @@ def load_dotenv(path: str | os.PathLike[str] | None = None) -> bool:
     return loaded  # True if at least one file was located and loaded.
 
 
+# 启动 Flask 服务器时显示启动信息。这些信息帮助开发者了解正在运行的应用和其调试状态。
+def show_server_banner(debug: bool, app_import_path: str | None) -> None:
+    """Show extra startup messages the first time the server is run,
+    ignoring the reloader.
+    """
+    # 这行检查当前 Flask 应用是否由 Werkzeug 的 reloader 启动。
+    # 如果是，函数立即返回，不显示任何启动信息。这是因为 reloader 会在代码改动时重启服务器，
+    # 但我们只在第一次启动服务器时显示启动信息，避免在每次自动重启时都重复显示。
+    if is_running_from_reloader():
+        return
+
+    # 使用 click.echo 打印出正在服务的 Flask 应用的名称。
+    if app_import_path is not None:
+        click.echo(f" * Serving Flask app '{app_import_path}'")
+
+    # 打印出调试模式的状态。
+    if debug is not None:
+        click.echo(f" * Debug mode: {'on' if debug else 'off'}")
 
 
+# 专门用于处理 Flask 应用中 --cert 命令行选项的参数。
+# 通过自定义的转换逻辑，为 Flask 应用提供了灵活的 SSL 证书配置方式，
+# 支持从文件、临时生成或程序导入的 SSL 上下文中选择。
+class CertParamType(click.ParamType):
+    """Click option type for the ``--cert`` option. Allows either an
+    existing file, the string ``'adhoc'``, or an import for a
+    :class:`~ssl.SSLContext` object.
+    """
 
+    name = "path"
 
+    # 在类的初始化方法中，创建了一个 click.Path 实例，配置为只接受已存在的文件路径（不接受目录），
+    # 并自动解析路径。这个 click.Path 实例用于后续验证文件路径参数。
+    def __init__(self) -> None:
+        self.path_type = click.Path(exists=True, dir_okay=False, resolve_path=True)
+
+    # convert 方法，用于将命令行参数的值转换成期望的格式。
+    def convert(
+        self, value: t.Any, param: click.Parameter | None, ctx: click.Context | None
+    ) -> t.Any:
+        try:
+            import ssl
+        except ImportError:
+            # 提示用户该功能需要 Python 编译时支持 SSL。
+            raise click.BadParameter(
+                'Using "--cert" requires Python to be compiled with SSL support.',
+                ctx,
+                param,
+            ) from None
+
+        try:
+            # 尝试使用前面创建的 click.Path 实例来验证和处理 value。
+            return self.path_type(value, param, ctx)
+        except click.BadParameter:
+            # 将 value 转换为小写字符串，以便处理 'adhoc' 选项或 SSL 上下文对象的导入路径。
+            value = click.STRING(value, param, ctx).lower()
+
+            if value == "adhoc":
+                try:
+                    import cryptography  # noqa: F401
+                except ImportError:
+                    raise click.BadParameter(
+                        "Using ad-hoc certificates requires the cryptography library.",
+                        ctx,
+                        param,
+                    ) from None
+
+                return value
+
+            # 如果 value 不是 'adhoc'，尝试将其视为一个导入路径，并使用 import_string 函数尝试导入。
+            obj = import_string(value, silent=True)
+
+            # 如果成功导入，并且导入的对象是 ssl.SSLContext 类型，则返回这个对象。
+            if isinstance(obj, ssl.SSLContext):
+                return obj
+
+            raise
 
 
 
