@@ -1120,6 +1120,60 @@ class CertParamType(click.ParamType):
             raise
 
 
+# 用于验证 --key 命令行选项的值，并根据情况修改 --cert 参数的值，
+# 确保 --key 和 --cert 选项的一致性和正确性。
+# ctx 是 Click 上下文对象，param 是 Click 参数对象，value 是命令行选项传递的值。
+def _validate_key(ctx: click.Context, param: click.Parameter, value: t.Any) -> t.Any:
+    """The ``--key`` option must be specified when ``--cert`` is a file.
+    Modifies the ``cert`` param to be a ``(cert, key)`` pair if needed.
+    """
+    # 获取 ctx 中 cert 参数的值。
+    cert = ctx.params.get("cert")
+    # 检查是否为临时证书 ("adhoc")。
+    is_adhoc = cert == "adhoc"
+
+    # 是否为 ssl.SSLContext 对象。如果未导入 ssl 模块（即 Python 没有 SSL 支持），
+    # 将 is_context 设为 False。
+    try:
+        import ssl
+    except ImportError:
+        is_context = False
+    else:
+        is_context = isinstance(cert, ssl.SSLContext)
+
+    # 如果 --key 选项的值不是 None，表示用户在命令行中提供了一个 --key 参数值。
+    if value is not None:
+        # 如果 --cert 是临时证书 ("adhoc")，则不允许使用 --key 选项，抛出异常。
+        if is_adhoc:
+            raise click.BadParameter(
+                'When "--cert" is "adhoc", "--key" is not used.', ctx, param
+            )
+
+        # 如果 --cert 是一个 ssl.SSLContext 对象，则不允许使用 --key 选项，抛出异常。
+        if is_context:
+            raise click.BadParameter(
+                'When "--cert" is an SSLContext object, "--key" is not used.',
+                ctx,
+                param,
+            )
+
+        # 如果没有提供 --cert 选项，也不允许提供 --key 选项，因此抛出异常。
+        if not cert:
+            raise click.BadParameter('"--cert" must also be specified.', ctx, param)
+
+        # 如果以上验证都通过，则将 cert 参数修改为一个元组 (cert, key)。
+        ctx.params["cert"] = cert, value
+
+    # 如果 --key 选项的值为 None，即用户没有在命令行中提供 --key 参数值。
+    else:
+        # 如果提供了 --cert 参数，但没有提供 --key 参数，且 --cert 不是临时证书也不是
+        # ssl.SSLContext 对象，则抛出异常，提示用户需要提供 --key 参数。
+        if cert and not (is_adhoc or is_context):
+            raise click.BadParameter('Required when using "--cert".', ctx, param)
+
+    # 返回验证后的参数值。
+    return value
+
 
 
 
