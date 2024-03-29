@@ -1175,8 +1175,27 @@ def _validate_key(ctx: click.Context, param: click.Parameter, value: t.Any) -> t
     return value
 
 
+# 允许接受由操作系统路径分隔符分隔的多个路径，并将它们转换为 Click 的路径类型。
+class SeparatedPathType(click.Path):
+    """Click option type that accepts a list of values separated by the
+    OS's path separator (``:``, ``;`` on Windows). Each value is
+    validated as a :class:`click.Path` type.
+    """
 
-
+    def convert(
+        # value 是命令行中提供的参数值，param 是 Click 参数对象，ctx 是 Click 上下文对象。
+        self, value: t.Any, param: click.Parameter | None, ctx: click.Context | None
+    ) -> t.Any:
+        # 调用 split_envvar_value 方法，将输入的字符串值根据操作系统的路径分隔符进行分割，
+        # 得到一个列表 items，其中包含分隔后的各个值。
+        items = self.split_envvar_value(value)
+        # can't call no-arg super() inside list comprehension until Python 3.12
+        # 由于在 Python 中不能在列表推导式中调用无参数的 super()，因此将 super().convert 方法
+        # 赋值给一个局部变量 super_convert，以在后面的列表推导式中使用。
+        super_convert = super().convert
+        # 使用列表推导式遍历 items 列表中的每个值，对每个值使用 super_convert 方法
+        # （即 click.Path 类的 convert 方法）进行转换，并将转换后的值组成一个新的列表返回。
+        return [super_convert(item, param, ctx) for item in items]
 
 
 
