@@ -1262,6 +1262,104 @@ class SeparatedPathType(click.Path):
 )
 
 
+# pass_script_info 装饰器被应用于 run_command 函数，使得 run_command 函数在运行时能够
+# 接收一个 ScriptInfo 对象作为参数，并且确保每次调用 run_command 函数时都会传递这个参数。
+@pass_script_info
+# 用于运行本地开发服务器。它接受多个参数，包括应用程序信息、主机、端口、重载器、调试器、线程、
+# 证书、额外文件和排除模式，并在运行时根据这些参数启动一个简单的 WSGI 服务器。
+def run_command(
+    info: ScriptInfo,
+    host: str,
+    port: int,
+    reload: bool,
+    debugger: bool,
+    with_threads: bool,
+    cert: ssl.SSLContext | tuple[str, str | None] | t.Literal["adhoc"] | None,
+    extra_files: list[str] | None,
+    exclude_patterns: list[str] | None,
+) -> None:
+    """Run a local development server.
+
+    This server is for development purposes only. It does not provide
+    the stability, security, or performance of production WSGI servers.
+
+    The reloader and debugger are enabled by default with the '--debug'
+    option.
+    """
+    # 尝试加载应用程序，其中 info.load_app() 是一个用于加载应用程序的函数，
+    # 它返回一个 WSGIApplication 实例。
+    try:
+        app: WSGIApplication = info.load_app()
+    # 如果加载应用程序时发生任何异常，则捕获异常。
+    except Exception as e:
+        # 如果在重新加载（reloader）时运行，将立即打印异常，但稍后将引发异常以便调试器或服务器处理。
+        if is_running_from_reloader():
+            # When reloading, print out the error immediately, but raise
+            # it later so the debugger or server can handle it.
+            traceback.print_exc()
+            err = e
+
+            def app(
+                environ: WSGIEnvironment, start_response: StartResponse
+            ) -> cabc.Iterable[bytes]:
+                raise err from None
+
+        # 如果不是在重新加载时运行，则立即引发异常。
+        else:
+            # When not reloading, raise the error immediately so the
+            # command fails.
+            raise e from None
+
+    # from .helpers import get_debug_flag
+    debug = get_debug_flag()
+
+    if reload is None:
+        reload = debug
+
+    if debugger is None:
+        debugger = debug
+
+    # 显示服务器的启动横幅，如果正在重新加载，则不显示。
+    show_server_banner(debug, info.app_import_path)
+
+    # 运行简单的 WSGI 服务器，接受参数包括主机、端口、应用程序、重载器、调试器、
+    # 线程、证书、额外文件和排除模式。
+    run_simple(
+        host,
+        port,
+        app,
+        use_reloader=reload,
+        use_debugger=debugger,
+        threaded=with_threads,
+        ssl_context=cert,
+        extra_files=extra_files,
+        exclude_patterns=exclude_patterns,
+    )
+
+# 将 _debug_option 添加到命令函数的参数列表中，以便在命令行中可以使用 --debug/--no-debug 选项。
+run_command.params.insert(0, _debug_option)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
