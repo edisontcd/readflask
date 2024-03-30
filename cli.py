@@ -1198,8 +1198,68 @@ class SeparatedPathType(click.Path):
         return [super_convert(item, param, ctx) for item in items]
 
 
-
-
+# 装饰器 @click.command，用于定义一个名为 "run" 的命令，该命令用于启动一个开发服务器。
+@click.command("run", short_help="Run a development server.")
+# --host, -h: 指定服务器绑定的接口地址，默认为 "127.0.0.1"。
+@click.option("--host", "-h", default="127.0.0.1", help="The interface to bind to.")
+#--port, -p: 指定服务器绑定的端口号，默认为 5000。
+@click.option("--port", "-p", default=5000, help="The port to bind to.")
+# --cert: 指定一个证书文件用于启用 HTTPS。
+@click.option(
+    "--cert",
+    type=CertParamType(),
+    help="Specify a certificate file to use HTTPS.",
+    is_eager=True,
+)
+# --key: 指定一个密钥文件用于与证书配对。
+@click.option(
+    "--key",
+    type=click.Path(exists=True, dir_okay=False, resolve_path=True),
+    callback=_validate_key,
+    expose_value=False,
+    help="The key file to use when specifying a certificate.",
+)
+# --reload/--no-reload: 启用或禁用重载器。默认情况下，如果启用调试模式，则重载器处于活动状态。
+@click.option(
+    "--reload/--no-reload",
+    default=None,
+    help="Enable or disable the reloader. By default the reloader "
+    "is active if debug is enabled.",
+)
+# --debugger/--no-debugger: 启用或禁用调试器。默认情况下，如果启用调试模式，则调试器处于活动状态。
+@click.option(
+    "--debugger/--no-debugger",
+    default=None,
+    help="Enable or disable the debugger. By default the debugger "
+    "is active if debug is enabled.",
+)
+# --with-threads/--without-threads: 启用或禁用多线程。默认情况下，多线程是启用的。
+@click.option(
+    "--with-threads/--without-threads",
+    default=True,
+    help="Enable or disable multithreading.",
+)
+# --extra-files: 指定触发重新加载的额外文件列表。多个路径由操作系统的路径分隔符（例如 : 或 ;）分隔。
+@click.option(
+    "--extra-files",
+    default=None,
+    type=SeparatedPathType(),
+    help=(
+        "Extra files that trigger a reload on change. Multiple paths"
+        f" are separated by {os.path.pathsep!r}."
+    ),
+)
+# --exclude-patterns: 指定不触发重新加载的文件匹配模式列表。多个模式由操作系统的路径分隔符分隔。
+@click.option(
+    "--exclude-patterns",
+    default=None,
+    type=SeparatedPathType(),
+    help=(
+        "Files matching these fnmatch patterns will not trigger a reload"
+        " on change. Multiple patterns are separated by"
+        f" {os.path.pathsep!r}."
+    ),
+)
 
 
 
