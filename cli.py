@@ -1340,13 +1340,184 @@ def run_command(
 run_command.params.insert(0, _debug_option)
 
 
+# 该装饰器定义了一个名为 "shell" 的 Click 命令，并提供了一个简短的帮助消息。
+@click.command("shell", short_help="Run a shell in the app context.")
+# 用于确保在运行命令时会建立应用程序的上下文，这样命令就能够访问应用程序的配置和功能。
+@with_appcontext
+# 用于运行交互式的 Python shell。
+def shell_command() -> None:
+    """Run an interactive Python shell in the context of a given
+    Flask application.  The application will populate the default
+    namespace of this shell according to its configuration.
+
+    This is useful for executing small snippets of management code
+    without having to manually configure the application.
+    """
+    # 导入了 Python 标准库中的 code 模块，该模块提供了与交互式解释器交互的功能。
+    import code
+
+    # 创建了一个字符串 banner，其中包含了 Python 的版本、操作系统平台、
+    # 应用程序的导入名称和实例路径等信息。
+    banner = (
+        f"Python {sys.version} on {sys.platform}\n"
+        f"App: {current_app.import_name}\n"
+        f"Instance: {current_app.instance_path}"
+    )
+    # 定义了一个空字典 ctx，用于存储在 Python shell 中可用的上下文信息。
+    ctx: dict[str, t.Any] = {}
+
+    # Support the regular Python interpreter startup script if someone
+    # is using it.
+    # 检查环境变量 PYTHONSTARTUP 是否设置，并且指定的文件是否存在。如果存在且是一个文件，
+    # 它将读取文件内容并将其作为 Python 代码执行，将执行结果存储在 ctx 中。
+    startup = os.environ.get("PYTHONSTARTUP")
+    if startup and os.path.isfile(startup):
+        with open(startup) as f:
+            eval(compile(f.read(), startup, "exec"), ctx)
+
+    # 调用 current_app.make_shell_context() 方法获取应用程序的 shell 上下文，
+    # 并将其内容添加到 ctx 字典中。
+    ctx.update(current_app.make_shell_context())
+
+    # Site, customize, or startup script can set a hook to call when
+    # entering interactive mode. The default one sets up readline with
+    # tab and history completion.
+    # 获取 sys 模块中的 __interactivehook__ 属性，该属性用于定义在进入交互模式时执行的钩子函数。
+    interactive_hook = getattr(sys, "__interactivehook__", None)
+
+    # 检查是否定义了交互模式的钩子函数。
+    if interactive_hook is not None:
+        try:
+            # 导入了 Python 标准库中的 readline 和 rlcompleter 模块，
+            # 用于支持输入历史记录和自动补全功能。
+            import readline
+            from rlcompleter import Completer
+        except ImportError:
+            pass
+        else:
+            # rlcompleter uses __main__.__dict__ by default, which is
+            # flask.__main__. Use the shell context instead.
+            # 设置了自动补全函数，以便在 Python shell 中使用应用程序上下文中的对象进行自动补全。
+            readline.set_completer(Completer(ctx).complete)
+
+        # 这行代码调用了交互模式的钩子函数，执行任何与交互模式相关的自定义操作。
+        interactive_hook()
+
+    # 启动了一个交互式的 Python shell，使用之前定义的 banner 作为启动横幅，
+    # 并使用 ctx 字典中的内容作为本地命名空间。
+    code.interact(banner=banner, local=ctx)
 
 
+# 装饰器定义了一个名为 "routes" 的命令，并提供了一个简短的帮助消息。
+@click.command("routes", short_help="Show the routes for the app.")
+# 定义了一个选项 "--sort"（或 "-s" 的简写），用于指定按照哪种方法对路由进行排序。
+# 可选的排序方法包括 "endpoint"（端点）、"methods"（方法）、"domain"（域名）、
+# "rule"（规则）和 "match"（匹配）。默认按照 "endpoint" 排序。
+@click.option(
+    "--sort",
+    "-s",
+    type=click.Choice(("endpoint", "methods", "domain", "rule", "match")),
+    default="endpoint",
+    help=(
+        "Method to sort routes by. 'match' is the order that Flask will match routes"
+        " when dispatching a request."
+    ),
+)
+# 定义了一个选项 "--all-methods"，如果指定该选项，则显示所有请求方法，包括 "HEAD" 和 "OPTIONS"。这是一个布尔选项。
+@click.option("--all-methods", is_flag=True, help="Show HEAD and OPTIONS methods.")
+# 确保在运行命令时会建立应用程序的上下文，以便访问应用程序的配置和功能。
+@with_appcontext
+# 用于执行 "routes" 命令。它接受两个参数：sort（用于指定排序方法）
+# 和 all_methods（用于指定是否显示所有请求方法）。
+def routes_command(sort: str, all_methods: bool) -> None:
+    """Show all registered routes with endpoints and methods."""
+    # 获取当前应用程序中注册的所有路由规则，并将其存储在一个列表中。
+    rules = list(current_app.url_map.iter_rules())
+
+    # 如果没有注册任何路由规则，则输出一条消息并结束函数执行。
+    if not rules:
+        click.echo("No routes were registered.")
+        return
+
+    # 根据 all_methods 参数的值，创建一个集合，其中包含要忽略的请求方法。
+    # 如果 all_methods 为 True，则忽略空集合；否则忽略 "HEAD" 和 "OPTIONS" 方法。
+    ignored_methods = set() if all_methods else {"HEAD", "OPTIONS"}
+    # 检查应用程序是否启用了主机匹配，并且是否有路由规则指定了域名或子域名。
+    host_matching = current_app.url_map.host_matching
+    has_domain = any(rule.host if host_matching else rule.subdomain for rule in rules)
+    rows = []
+
+    for rule in rules:
+        # 创建一个列表 row，包含当前路由规则的端点(endpoint)和方法(methods)。
+        # 方法以逗号分隔，按字母顺序排列。
+        row = [
+            rule.endpoint,
+            ", ".join(sorted((rule.methods or set()) - ignored_methods)),
+        ]
+
+        # 如果应用程序具有域名(host)信息，则将其添加到 row 中，否则将添加子域名(subdomain)信息。
+        if has_domain:
+            row.append((rule.host if host_matching else rule.subdomain) or "")
+
+        row.append(rule.rule)
+        rows.append(row)
+
+    # 创建一个包含列名的列表 headers，和一个用于排序的列表 sorts。
+    headers = ["Endpoint", "Methods"]
+    sorts = ["endpoint", "methods"]
+
+    # 如果应用程序具有域名(host)信息，则添加相应的列名和排序标识。
+    if has_domain:
+        headers.append("Host" if host_matching else "Subdomain")
+        sorts.append("domain")
+
+    headers.append("Rule")
+    sorts.append("rule")
+
+    # 尝试根据指定的排序方法对 rows 列表进行排序，如果指定的排序方法不存在则忽略。
+    try:
+        rows.sort(key=itemgetter(sorts.index(sort)))
+    except ValueError:
+        pass
+
+    # 将 headers 列表插入到 rows 列表的第一行，作为表头。
+    rows.insert(0, headers)
+    # 计算每列的最大宽度，并根据最大宽度创建一个与表格列对应的分隔线，并将其插入到 rows 列表的第二行。
+    widths = [max(len(row[i]) for row in rows) for i in range(len(headers))]
+    rows.insert(1, ["-" * w for w in widths])
+    # 创建一个格式化模板，用于将 rows 列表中的数据按照指定的宽度格式化输出。
+    template = "  ".join(f"{{{i}:<{w}}}" for i, w in enumerate(widths))
+
+    # 使用格式化模板将 rows 列表中的每一行数据按照指定的格式输出到控制台。
+    for row in rows:
+        click.echo(template.format(*row))
+
+# 创建了一个名为 "flask" 的 FlaskGroup 实例，并传入了帮助信息。
+# FlaskGroup 是 Flask 应用程序的命令行接口，它可以加载应用程序并添加默认的命令，
+# 如运行服务器和交互式 shell。
+cli = FlaskGroup(
+    name="flask",
+    help="""\
+A general utility script for Flask applications.
+
+An application to load must be given with the '--app' option,
+'FLASK_APP' environment variable, or with a 'wsgi.py' or 'app.py' file
+in the current directory.
+""",
+)
 
 
+def main() -> None:
+    # 调用了 FlaskGroup 实例的 main() 方法，用于解析命令行参数并执行相应的操作。
+    # 这里实际上是执行了 FlaskGroup 提供的命令行接口，允许用户在命令行中
+    # 通过传递参数来操作 Flask 应用程序。
+    cli.main()
 
 
-
+# 用于判断当前模块是否被直接执行。如果是，就调用 main() 函数。这样做的好处是，
+# 模块既可以被直接运行，也可以被其他模块导入使用，而不会执行 main() 函数。
+if __name__ == "__main__":
+    main()
 
 
 
