@@ -169,8 +169,87 @@ class Config(dict):  # type: ignore[type-arg]
         # 无论是否引发异常，方法都会调用 from_pyfile 方法，传入获取到的配置文件路径 rv，并返回其结果。
         return self.from_pyfile(rv, silent=silent)
 
+    # 从环境变量中加载配置，并将其填充到配置对象中。
+    def from_prefixed_env(
+        # 接受一个可选的前缀参数和一个可选的加载函数参数，并返回一个布尔值表示是否成功加载配置。
+        self, prefix: str = "FLASK", *, loads: t.Callable[[str], t.Any] = json.loads
+    ) -> bool:
+        """Load any environment variables that start with ``FLASK_``,
+        dropping the prefix from the env key for the config key. Values
+        are passed through a loading function to attempt to convert them
+        to more specific types than strings.
 
+        Keys are loaded in :func:`sorted` order.
 
+        The default loading function attempts to parse values as any
+        valid JSON type, including dicts and lists.
+
+        Specific items in nested dicts can be set by separating the
+        keys with double underscores (``__``). If an intermediate key
+        doesn't exist, it will be initialized to an empty dict.
+
+        :param prefix: Load env vars that start with this prefix,
+            separated with an underscore (``_``).
+        :param loads: Pass each string value to this function and use
+            the returned value as the config value. If any error is
+            raised it is ignored and the value remains a string. The
+            default is :func:`json.loads`.
+
+        .. versionadded:: 2.1
+        """
+        # 给前缀添加下划线后缀，以便后续检查环境变量时更方便地判断是否以特定前缀开头。
+        prefix = f"{prefix}_"
+        # 获取前缀字符串的长度，并赋值给变量 len_prefix。
+        # 这样做是为了在后续操作中避免重复计算前缀长度。
+        len_prefix = len(prefix)
+
+        # 遍历环境变量中的所有键，按键名排序。
+        for key in sorted(os.environ):
+            # 检查当前键名是否以指定前缀开头，如果不是，则跳过后续操作。
+            if not key.startswith(prefix):
+                continue
+
+            # 获取环境变量中指定键的值，并将其赋给变量 value。
+            value = os.environ[key]
+
+            # 尝试将环境变量的值转换为特定类型，使用了指定的 loads 函数。
+            # 如果转换失败，则保持值为字符串类型。
+            try:
+                value = loads(value)
+            except Exception:
+                # Keep the value as a string if loading failed.
+                pass
+
+            # 去除键名中的前缀部分，以便后续将剩余部分作为配置的键名。
+            # Change to key.removeprefix(prefix) on Python >= 3.9.
+            key = key[len_prefix:]
+
+            # 检查键名中是否包含双下划线，如果不包含，则表示这是一个非嵌套的键，
+            # 直接将键值对设置到配置中，并继续处理下一个环境变量。
+            if "__" not in key:
+                # A non-nested key, set directly.
+                self[key] = value
+                continue
+
+            # Traverse nested dictionaries with keys separated by "__".
+            # 始化变量 current 为配置对象本身，用于追踪当前的配置字典。
+            current = self
+            # 拆分键名，将除最后一部分外的所有部分赋值给 *parts，将最后一部分赋值给变量 tail。
+            *parts, tail = key.split("__")
+
+            # 根据拆分后的部分逐层创建嵌套的字典结构，确保每一级的嵌套字典存在。
+            for part in parts:
+                # If an intermediate dict does not exist, create it.
+                if part not in current:
+                    current[part] = {}
+
+                current = current[part]
+
+            # 将值设置到最内层的嵌套字典中。
+            current[tail] = value
+
+        # 返回 True，表示环境变量加载完成。
+        return True
 
 
 
