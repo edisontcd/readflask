@@ -76,8 +76,98 @@ class ConfigAttribute(t.Generic[T]):
         obj.config[self.__name__] = value
 
 
+# 继承自内置的 dict 类，可以像字典一样工作，但提供了一些从文件或特殊字典填充配置的方法。
+class Config(dict):  # type: ignore[type-arg]
+    """Works exactly like a dict but provides ways to fill it from files
+    or special dictionaries.  There are two common patterns to populate the
+    config.
 
+    Either you can fill the config from a config file::
 
+        app.config.from_pyfile('yourconfig.cfg')
+
+    Or alternatively you can define the configuration options in the
+    module that calls :meth:`from_object` or provide an import path to
+    a module that should be loaded.  It is also possible to tell it to
+    use the same module and with that provide the configuration values
+    just before the call::
+
+        DEBUG = True
+        SECRET_KEY = 'development key'
+        app.config.from_object(__name__)
+
+    In both cases (loading from any Python file or loading from modules),
+    only uppercase keys are added to the config.  This makes it possible to use
+    lowercase values in the config file for temporary values that are not added
+    to the config or to define the config keys in the same file that implements
+    the application.
+
+    Probably the most interesting way to load configurations is from an
+    environment variable pointing to a file::
+
+        app.config.from_envvar('YOURAPPLICATION_SETTINGS')
+
+    In this case before launching the application you have to set this
+    environment variable to the file you want to use.  On Linux and OS X
+    use the export statement::
+
+        export YOURAPPLICATION_SETTINGS='/path/to/config/file'
+
+    On windows use `set` instead.
+
+    :param root_path: path to which files are read relative from.  When the
+                      config object is created by the application, this is
+                      the application's :attr:`~flask.Flask.root_path`.
+    :param defaults: an optional dictionary of default values
+    """
+
+    # 初始化方法。
+    def __init__(
+        self,
+        # 相对于其读取文件的路径，通常为应用程序的根路径；
+        root_path: str | os.PathLike[str],
+        # 可选的字典，包含默认配置值。
+        defaults: dict[str, t.Any] | None = None,
+    ) -> None:
+        # 使用父类的 __init__ 方法初始化配置对象，并传入默认值或空字典。
+        super().__init__(defaults or {})
+        # 将 root_path 存储在实例的 root_path 属性中，以供后续使用。
+        self.root_path = root_path
+
+    # 用于从环境变量指定的配置文件中加载配置。
+    # 是一个简便的方法，相当于以下代码的快捷方式：
+    # app.config.from_pyfile(os.environ['YOURAPPLICATION_SETTINGS'])
+    # variable_name: str: 环境变量的名称，该变量指定了配置文件的路径。
+    # silent: bool = False: 如果设置为 True，当找不到配置文件时，方法将静默失败而不会引发异常。
+    def from_envvar(self, variable_name: str, silent: bool = False) -> bool:
+        """Loads a configuration from an environment variable pointing to
+        a configuration file.  This is basically just a shortcut with nicer
+        error messages for this line of code::
+
+            app.config.from_pyfile(os.environ['YOURAPPLICATION_SETTINGS'])
+
+        :param variable_name: name of the environment variable
+        :param silent: set to ``True`` if you want silent failure for missing
+                       files.
+        :return: ``True`` if the file was loaded successfully.
+        """
+        # 这行代码从环境变量中获取指定名称的变量值，并将其赋给变量 rv。
+        rv = os.environ.get(variable_name)
+        # 这行代码检查变量 rv 是否为空，如果为空则表示环境变量未设置。
+        if not rv:
+            # 如果 silent 参数为 True，表示静默失败，那么这行代码会直接返回 False，不会引发异常。
+            if silent:
+                return False
+            # 如果 silent 参数为 False，表示非静默失败，那么这行代码会引发 RuntimeError 异常，
+            # 指示环境变量未设置，并提醒用户设置该变量以指向配置文件。
+            raise RuntimeError(
+                f"The environment variable {variable_name!r} is not set"
+                " and as such configuration could not be loaded. Set"
+                " this variable and make it point to a configuration"
+                " file"
+            )
+        # 无论是否引发异常，方法都会调用 from_pyfile 方法，传入获取到的配置文件路径 rv，并返回其结果。
+        return self.from_pyfile(rv, silent=silent)
 
 
 
