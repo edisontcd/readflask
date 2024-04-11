@@ -252,6 +252,125 @@ class Config(dict):  # type: ignore[type-arg]
         return True
 
 
+    # 从一个Python文件中更新配置的值。
+    # 它的作用类似于将文件作为模块导入，并使用 from_object 方法来加载配置。
+    def from_pyfile(
+        # 接受一个文件名和一个可选的静默参数，并返回一个布尔值表示是否成功加载配置。
+        self, filename: str | os.PathLike[str], silent: bool = False
+    ) -> bool:
+        """Updates the values in the config from a Python file.  This function
+        behaves as if the file was imported as module with the
+        :meth:`from_object` function.
+
+        :param filename: the filename of the config.  This can either be an
+                         absolute filename or a filename relative to the
+                         root path.
+        :param silent: set to ``True`` if you want silent failure for missing
+                       files.
+        :return: ``True`` if the file was loaded successfully.
+
+        .. versionadded:: 0.7
+           `silent` parameter.
+        """
+        # 构造文件的完整路径，使用了配置对象的根路径作为基础路径。
+        filename = os.path.join(self.root_path, filename)
+        # 创建一个名为 "config" 的模块对象。
+        d = types.ModuleType("config")
+        # 将模块对象的 __file__ 属性设置为文件名，以便在加载文件时可以正确获取文件路径。
+        d.__file__ = filename
+        # 尝试打开配置文件并执行其中的代码。
+        try:
+            # 使用二进制读取模式打开配置文件。
+            with open(filename, mode="rb") as config_file:
+                # compile 函数将文件内容编译成字节码对象，然后通过 exec 函数在指定的命名空间中执行。
+                # 这里的命名空间是模块对象 d 的 __dict__ 属性，因此配置文件中的变量将被添加到模块对象中。
+                exec(compile(config_file.read(), filename, "exec"), d.__dict__)
+        # 如果打开或执行过程中出现异常，则根据静默参数决定是否忽略异常。
+        except OSError as e:
+            # 如果设置了静默参数，并且出现了文件不存在、是目录或者不是目录等异常情况，
+            # 则返回 False，表示加载配置文件失败但不抛出异常。
+            if silent and e.errno in (errno.ENOENT, errno.EISDIR, errno.ENOTDIR):
+                return False
+            # 更新异常对象的错误信息，指示无法加载配置文件。
+            e.strerror = f"Unable to load configuration file ({e.strerror})"
+            raise
+        # 调用 from_object 方法，将模块对象作为参数，更新配置对象的值。
+        self.from_object(d)
+        return True
+
+
+    # 用于从给定的对象中更新配置值。对象可以是以下两种类型之一：
+    # 1.字符串：在这种情况下，将导入具有该名称的对象。2.实际对象引用：直接使用该对象。
+    # 通常情况下，对象可以是模块或类。from_object 方法仅加载模块/类的大写属性。
+    # dict 对象不适用于 from_object，因为字典的键不是字典类的属性。
+    def from_object(self, obj: object | str) -> None:
+        """Updates the values from the given object.  An object can be of one
+        of the following two types:
+
+        -   a string: in this case the object with that name will be imported
+        -   an actual object reference: that object is used directly
+
+        Objects are usually either modules or classes. :meth:`from_object`
+        loads only the uppercase attributes of the module/class. A ``dict``
+        object will not work with :meth:`from_object` because the keys of a
+        ``dict`` are not attributes of the ``dict`` class.
+
+        Example of module-based configuration::
+
+            app.config.from_object('yourapplication.default_config')
+            from yourapplication import default_config
+            app.config.from_object(default_config)
+
+        Nothing is done to the object before loading. If the object is a
+        class and has ``@property`` attributes, it needs to be
+        instantiated before being passed to this method.
+        在加载之前，不对对象执行任何操作。如果对象是一个类，并且具有 @property 属性，
+        则需要在传递给此方法之前将其实例化。
+
+        You should not use this function to load the actual configuration but
+        rather configuration defaults.  The actual config should be loaded
+        with :meth:`from_pyfile` and ideally from a location not within the
+        package because the package might be installed system wide.
+        不应该使用此函数加载实际的配置，而应该使用此函数加载配置的默认值。
+        实际的配置应该使用 from_pyfile 方法加载，并且最好从不在包内的位置加载，
+        因为包可能是系统范围内安装的。
+
+        See :ref:`config-dev-prod` for an example of class-based configuration
+        using :meth:`from_object`.
+
+        :param obj: an import name or object
+        """
+        # 先检查传入的 obj 是否是字符串类型。如果是字符串类型，
+        # 则使用 import_string 函数将其转换为相应的对象。
+        if isinstance(obj, str):
+            obj = import_string(obj)
+        # 通过遍历 obj 对象的属性，将所有大写属性的值添加到当前配置对象中。
+        # 这样做是为了加载配置对象中的大写属性作为配置项。
+        for key in dir(obj):
+            if key.isupper():
+                self[key] = getattr(obj, key)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
