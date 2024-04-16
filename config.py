@@ -351,33 +351,165 @@ class Config(dict):  # type: ignore[type-arg]
                 self[key] = getattr(obj, key)
 
 
+    # 从指定文件中加载配置，并根据文件内容更新应用的配置设置。
+    def from_file(
+        self,
+        # 指定要加载的文件的路径。可以是绝对或相对路径。
+        filename: str | os.PathLike[str],
+        # 函数类型的参数，定义了如何从文件中读取数据。这使得该方法可以处理不同格式的文件
+        # （如 JSON, YAML, TOML 等），只需传入相应的加载函数即可。
+        load: t.Callable[[t.IO[t.Any]], t.Mapping[str, t.Any]],
+        # 当文件不存在时，如果此参数为 True，方法会静默失败（返回 False），否则会抛出异常。
+        silent: bool = False,
+        # 指定文件应以文本模式还是二进制模式打开。这对于处理那些必须以二进制形式读取的数据格式
+        #（如某些特定版本的 TOML 文件）是有用的。
+        text: bool = True,
+    ) -> bool:
+        """Update the values in the config from a file that is loaded
+        using the ``load`` parameter. The loaded data is passed to the
+        :meth:`from_mapping` method.
+
+        .. code-block:: python
+
+            import json
+            app.config.from_file("config.json", load=json.load)
+
+            import tomllib
+            app.config.from_file("config.toml", load=tomllib.load, text=False)
+
+        :param filename: The path to the data file. This can be an
+            absolute path or relative to the config root path.
+        :param load: A callable that takes a file handle and returns a
+            mapping of loaded data from the file.
+        :type load: ``Callable[[Reader], Mapping]`` where ``Reader``
+            implements a ``read`` method.
+        :param silent: Ignore the file if it doesn't exist.
+        :param text: Open the file in text or binary mode.
+        :return: ``True`` if the file was loaded successfully.
+
+        .. versionchanged:: 2.3
+            The ``text`` parameter was added.
+
+        .. versionadded:: 2.0
+        """
+        filename = os.path.join(self.root_path, filename)
+
+        try:
+            # 根据 text 参数的值，以文本模式或二进制模式打开文件。
+            with open(filename, "r" if text else "rb") as f:
+                # 使用 load 函数从打开的文件中读取数据。load 函数应该能处理相应的文件格式，
+                # 并返回一个映射类型的数据。
+                obj = load(f)
+        except OSError as e:
+            # 如果在文件打开或数据加载过程中出现 OSError，根据 silent 参数决定是否忽略错误。
+            # 如果不忽略错误，则修改错误消息并重新抛出。
+            if silent and e.errno in (errno.ENOENT, errno.EISDIR):
+                return False
+
+            e.strerror = f"Unable to load configuration file ({e.strerror})"
+            raise
+
+        # 如果文件成功加载，调用 from_mapping 方法来将加载的数据更新到配置中。
+        return self.from_mapping(obj)
 
 
+    # 将给定的键值对更新到当前配置中，但仅更新那些键（key）为大写的条目。
+    # 这种设计通常用于环境变量或配置设置，确保只有符合特定命名规范的设置被接受和应用
+    def from_mapping(
+        # 一个包含配置条目的映射对象，如字典。默认为 None，如果提供，方法将从中读取条目进行更新。
+        # 关键字参数，允许在方法调用时直接传入多个配置条目作为参数。
+        self, mapping: t.Mapping[str, t.Any] | None = None, **kwargs: t.Any
+    ) -> bool:
+        """Updates the config like :meth:`update` ignoring items with
+        non-upper keys.
+
+        :return: Always returns ``True``.
+
+        .. versionadded:: 0.11
+        """
+        # 首先创建一个空字典 mappings，用于收集所有需要更新的配置条目。
+        mappings: dict[str, t.Any] = {}
+        # 如果 mapping 参数不为 None，则将其条目添加到 mappings 字典中。
+        if mapping is not None:
+            mappings.update(mapping)
+        # 将通过关键字参数 kwargs 传递的所有配置条目也合并到 mappings 字典中。
+        mappings.update(kwargs)
+        # 检查每个键是否为大写。如果是大写，则将该键-值对更新到配置中。
+        # 这里使用 self[key] = value 进行赋值，这表明该方法是在一个支持键值赋值操作的
+        # 对象上执行，例如一个字典或类似字典的对象。
+        for key, value in mappings.items():
+            if key.isupper():
+                self[key] = value
+        return True
 
 
+    # 用于从配置中提取以特定命名空间为前缀的配置项，并将它们以字典形式返回。
+    def get_namespace(
+        # namespace (str): 配置项的前缀，方法将返回所有以这个前缀开始的配置项。
+        # lowercase (bool, 默认为 True): 指示返回的字典中的键是否应转换为小写。
+        # trim_namespace (bool, 默认为 True): 指示是否应从键中去除前缀。
+        self, namespace: str, lowercase: bool = True, trim_namespace: bool = True
+    ) -> dict[str, t.Any]:
+        """Returns a dictionary containing a subset of configuration options
+        that match the specified namespace/prefix. Example usage::
+
+            app.config['IMAGE_STORE_TYPE'] = 'fs'
+            app.config['IMAGE_STORE_PATH'] = '/var/app/images'
+            app.config['IMAGE_STORE_BASE_URL'] = 'http://img.website.com'
+            image_store_config = app.config.get_namespace('IMAGE_STORE_')
+
+        The resulting dictionary `image_store_config` would look like::
+
+            {
+                'type': 'fs',
+                'path': '/var/app/images',
+                'base_url': 'http://img.website.com'
+            }
+
+        This is often useful when configuration options map directly to
+        keyword arguments in functions or class constructors.
+
+        :param namespace: a configuration namespace
+        :param lowercase: a flag indicating if the keys of the resulting
+                          dictionary should be lowercase
+        :param trim_namespace: a flag indicating if the keys of the resulting
+                          dictionary should not include the namespace
+
+        .. versionadded:: 0.11
+        """
+        # 创建一个空字典 rv，用于存储最终的配置项。
+        rv = {}
+        # 历配置中的所有项 (self.items())，查找所有键名以 namespace 开头的项。
+        for k, v in self.items():
+            if not k.startswith(namespace):
+                continue
+            # 如果 trim_namespace 为 True，则从键名中移除前缀部分。
+            if trim_namespace:
+                key = k[len(namespace) :]
+            else:
+                key = k
+            # 如果 lowercase 为 True，则将处理后的键名转换为小写。
+            if lowercase:
+                key = key.lower()
+            # 将处理后的键和对应的值存入结果字典 rv。
+            rv[key] = v
+        # 方法返回结果字典 rv。
+        return rv
 
 
+    # 定义了一个 Python 类的 __repr__ 方法，用于生成对象的官方字符串表示，通常用于调试和开发中。
+    # 该方法重写了类的默认 __repr__ 方法，提供了一个更具可读性和有用信息的字符串表示。
+    # 重写 __repr__ 方法是提高类在实际应用中的可用性和可维护性的常用技巧。为类提供一个清晰的
+    # 字符串表示可以大大简化调试过程，特别是在复杂的应用中，能够快速查看对象的当前状态非常有用。
+    def __repr__(self) -> str:
+        # 通过 type(self).__name__ 获取当前对象的类名称。type(self) 返回对象的类型，
+        # __name__ 属性则提供了类型的名称。
+        # dict.__repr__(self) 调用字典的 __repr__ 方法，返回当前对象
+        # （假设对象继承自 dict 或表现得像字典）的字典形式的字符串表示。
+        # 这个表示将包括所有键值对，格式为 {key: value, ...}。
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        # 返回一个字符串，格式为 "<ClassName {dictionary representation}>"。
+        # 例如，如果对象的类名是 Config 并且包含数据 { 'a': 1, 'b': 2 }，
+        # 则返回的字符串可能看起来像这样："<Config {'a': 1, 'b': 2}>"。
+        return f"<{type(self).__name__} {dict.__repr__(self)}>"
 
