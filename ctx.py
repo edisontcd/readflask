@@ -38,3 +38,80 @@ if t.TYPE_CHECKING:  # pragma: no cover
 
 # a singleton sentinel value for parameter defaults
 _sentinel = object()
+
+
+# 用于在应用上下文中作为一个命名空间存储数据。
+# 当创建一个应用上下文时，这个对象会被自动创建，并通过 g 代理对象使其可用。
+class _AppCtxGlobals:
+    """A plain object. Used as a namespace for storing data during an
+    application context.
+
+    Creating an app context automatically creates this object, which is
+    made available as the :data:`g` proxy.
+
+    .. describe:: 'key' in g
+
+        Check whether an attribute is present.
+
+        .. versionadded:: 0.10
+
+    .. describe:: iter(g)
+
+        Return an iterator over the attribute names.
+
+        .. versionadded:: 0.10
+    """
+
+    # Define attr methods to let mypy know this is a namespace object
+    # that has arbitrary attributes.
+
+    # 用来获取属性的特殊方法。
+    # 如果这个属性在实例的字典 __dict__ 中不存在，则会抛出一个 AttributeError 异常。
+    # 这允许 _AppCtxGlobals 对象动态地处理属性访问，即使这些属性在创建对象时并未定义。
+    def __getattr__(self, name: str) -> t.Any:
+        try:
+            return self.__dict__[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    # 重写了设置属性的行为。
+    # 通过直接修改实例的字典 __dict__，这个方法允许动态地为对象添加新属性
+    # 或修改现有属性的值，从而提供了极高的灵活性。
+    def __setattr__(self, name: str, value: t.Any) -> None:
+        self.__dict__[name] = value
+
+    # 用于删除属性。
+    # 如果尝试删除的属性在 __dict__ 中不存在，则会抛出 AttributeError 异常。
+    # 这样，可以确保只有实际存在的属性可以被删除，避免了可能的错误。
+    def __delattr__(self, name: str) -> None:
+        try:
+            del self.__dict__[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
