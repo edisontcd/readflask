@@ -89,13 +89,69 @@ class _AppCtxGlobals:
         except KeyError:
             raise AttributeError(name) from None
 
+    # 用于从 _AppCtxGlobals 对象中获取属性值。如果属性不存在，则返回一个默认值。
+    def get(self, name: str, default: t.Any | None = None) -> t.Any:
+        """Get an attribute by name, or a default value. Like
+        :meth:`dict.get`.
 
+        :param name: Name of attribute to get.
+        :param default: Value to return if the attribute is not present.
 
+        .. versionadded:: 0.10
+        """
+        return self.__dict__.get(name, default)
 
+    # 用于获取并移除 _AppCtxGlobals 对象中的属性。
+    # 如果属性不存在，可以选择返回一个默认值，而不是抛出 KeyError 异常。
+    def pop(self, name: str, default: t.Any = _sentinel) -> t.Any:
+        """Get and remove an attribute by name. Like :meth:`dict.pop`.
 
+        :param name: Name of attribute to pop.
+        :param default: Value to return if the attribute is not present,
+            instead of raising a ``KeyError``.
 
+        .. versionadded:: 0.11
+        """
+        if default is _sentinel:
+            return self.__dict__.pop(name)
+        else:
+            return self.__dict__.pop(name, default)
 
+    # 用于获取属性的值，如果属性不存在，则设置属性为默认值并返回该默认值。
+    def setdefault(self, name: str, default: t.Any = None) -> t.Any:
+        """Get the value of an attribute if it is present, otherwise
+        set and return a default value. Like :meth:`dict.setdefault`.
 
+        :param name: Name of attribute to get.
+        :param default: Value to set and return if the attribute is not
+            present.
+
+        .. versionadded:: 0.11
+        """
+        return self.__dict__.setdefault(name, default) 
+
+    # 这个方法实现了 in 运算符，使我们可以使用 item in obj 的语法来
+    # 检查 item 是否存在于 self.__dict__ 中。
+    # item：要检查的属性名，类型为字符串。
+    # 返回值类型为布尔值，如果 item 是 self.__dict__ 的一个键，
+    # 则返回 True，否则返回 False。
+    def __contains__(self, item: str) -> bool:
+        return item in self.__dict__
+
+    # 这个方法使对象可迭代，返回一个迭代器，可以遍历 self.__dict__ 的键。
+    # 返回值类型为字符串迭代器。
+    def __iter__(self) -> t.Iterator[str]:
+        return iter(self.__dict__)
+
+    # 这个方法提供了对象的字符串表示，主要用于调试和日志记录。
+    # 尝试从 _cv_app 中获取当前的应用上下文 ctx。
+    # 如果 ctx 不为 None，则返回一个格式化字符串，表示当前的 Flask 应用名称（例如 <flask.g of 'myapp'>）。
+    # 如果 ctx 为 None，则调用 object.__repr__(self) 返回默认的对象表示。
+    def __repr__(self) -> str:
+        ctx = _cv_app.get(None)
+        if ctx is not None:
+            return f"<flask.g of '{ctx.app.name}'>"
+        return object.__repr__(self)
 
 
 
