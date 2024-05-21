@@ -154,10 +154,97 @@ class _AppCtxGlobals:
         return object.__repr__(self)
 
 
+# 用于在请求处理完毕后执行一个函数。
+# 这个函数通常用于修改响应对象，例如添加额外的头部信息。
+def after_this_request(
+    # f: 一个可调用对象，用于在请求处理完毕后执行的操作。
+    # 它接受一个响应对象作为参数，并返回同一个或新的响应对象。
+    f: ft.AfterRequestCallable[t.Any],
+) -> ft.AfterRequestCallable[t.Any]:
+    """Executes a function after this request.  This is useful to modify
+    response objects.  The function is passed the response object and has
+    to return the same or a new one.
+
+    Example::
+
+        @app.route('/')
+        def index():
+            @after_this_request
+            def add_header(response):
+                response.headers['X-Foo'] = 'Parachute'
+                return response
+            return 'Hello World!'
+
+    This is more useful if a function other than the view function wants to
+    modify a response.  For instance think of a decorator that wants to add
+    some headers without converting the return value into a response object.
+
+    .. versionadded:: 0.9
+    """
+    ctx = _cv_request.get(None)
+
+    # 如果没有请求上下文处于活动状态（例如在视图函数之外调用），则会引发 RuntimeError 异常。
+    if ctx is None:
+        raise RuntimeError(
+            "'after_this_request' can only be used when a request"
+            " context is active, such as in a view function."
+        )
+
+    ctx._after_request_functions.append(f)
+    return f
+
+# 变量 F 用于声明一个泛型类型，表示任意的可调用对象。
+F = t.TypeVar("F", bound=t.Callable[..., t.Any])
 
 
+# 一个装饰器，用于在异步工作环境中（例如使用 greenlets）保留当前的请求上下文。
+# 当异步函数被调用时，它仍然能够访问 Flask 的请求上下文和会话。
+# f：被装饰的函数。类型为 F，这是一个泛型类型，表示任何可调用对象。
+def copy_current_request_context(f: F) -> F:
+    """A helper function that decorates a function to retain the current
+    request context.  This is useful when working with greenlets.  The moment
+    the function is decorated a copy of the request context is created and
+    then pushed when the function is called.  The current session is also
+    included in the copied request context.
 
+    Example::
 
+        import gevent
+        from flask import copy_current_request_context
+
+        @app.route('/')
+        def index():
+            @copy_current_request_context
+            def do_some_work():
+                # do some work here, it can access flask.request or
+                # flask.session like you would otherwise in the view function.
+                ...
+            gevent.spawn(do_some_work)
+            return 'Regular response'
+
+    .. versionadded:: 0.10
+    """
+    # 通过 _cv_request.get(None) 获取当前请求上下文。
+    ctx = _cv_request.get(None)
+
+    # 如果当前没有活动的请求上下文，则抛出 RuntimeError 异常，
+    # 提示该装饰器只能在有活动请求上下文时使用，例如在视图函数中。
+    if ctx is None:
+        raise RuntimeError(
+            "'copy_current_request_context' can only be used when a"
+            " request context is active, such as in a view function."
+        )
+
+    # 复制当前的请求上下文 ctx，以便在异步工作时能够使用这个上下文。
+    ctx = ctx.copy()
+
+    def wrapper(*args: t.Any, **kwargs: t.Any) -> t.Any:
+        # 使用 with ctx: 语句推送复制的上下文 ctx。
+        with ctx:  # type: ignore[union-attr]
+            # 执行被装饰的函数 f，确保函数在正确的上下文中执行。
+            return ctx.app.ensure_sync(f)(*args, **kwargs)  # type: ignore[union-attr]
+
+    return update_wrapper(wrapper, f)  # type: ignore[return-value]
 
 
 
