@@ -247,13 +247,323 @@ def copy_current_request_context(f: F) -> F:
     return update_wrapper(wrapper, f)  # type: ignore[return-value]
 
 
+# 用于检查当前是否存在请求上下文。
+# 这在编写需要根据请求上下文条件执行不同操作的代码时非常有用。
+# 该函数没有参数，返回一个布尔值，指示当前是否存在请求上下文。
+def has_request_context() -> bool:
+    """If you have code that wants to test if a request context is there or
+    not this function can be used.  For instance, you may want to take advantage
+    of request information if the request object is available, but fail
+    silently if it is unavailable.
+
+    ::
+
+        class User(db.Model):
+
+            def __init__(self, username, remote_addr=None):
+                self.username = username
+                if remote_addr is None and has_request_context():
+                    remote_addr = request.remote_addr
+                self.remote_addr = remote_addr
+
+    Alternatively you can also just test any of the context bound objects
+    (such as :class:`request` or :class:`g`) for truthness::
+
+        class User(db.Model):
+
+            def __init__(self, username, remote_addr=None):
+                self.username = username
+                if remote_addr is None and request:
+                    remote_addr = request.remote_addr
+                self.remote_addr = remote_addr
+
+    .. versionadded:: 0.7
+    """
+    # _cv_request.get(None)尝试获取当前请求上下文对象。如果不存在请求上下文，则返回 None。
+    # is not None 判断当前请求上下文对象是否存在。如果存在，返回 True；否则返回 False。
+    return _cv_request.get(None) is not None
 
 
+# 用于检查当前是否存在应用上下文。
+# 这个函数没有参数，返回一个布尔值，指示当前是否存在应用上下文。
+# 也可以直接对 current_app 对象进行布尔检查来达到相同的效果。
+def has_app_context() -> bool:
+    """Works like :func:`has_request_context` but for the application
+    context.  You can also just do a boolean check on the
+    :data:`current_app` object instead.
+
+    .. versionadded:: 0.9
+    """
+    return _cv_app.get(None) is not None
 
 
+# 管理 Flask 应用的上下文信息，确保在请求和 CLI 命令执行期间正确地设置和清理上下文。
+# 通过实现上下文管理协议，AppContext 可以方便地使用 with 语句来自动管理上下文的推送和弹出。
+class AppContext:
+    """The app context contains application-specific information. An app
+    context is created and pushed at the beginning of each request if
+    one is not already active. An app context is also pushed when
+    running CLI commands.
+    """
+
+    # 构造方法
+    def __init__(self, app: Flask) -> None:
+        # 保存应用实例。
+        self.app = app
+        # 创建 URL 适配器，用于 URL 映射。
+        self.url_adapter = app.create_url_adapter(None)
+        # 创建一个全局命名空间对象，用于存储临时数据。
+        self.g: _AppCtxGlobals = app.app_ctx_globals_class()
+        # 初始化一个列表，用于存储上下文变量的令牌。
+        self._cv_tokens: list[contextvars.Token[AppContext]] = []
+
+    # 推送上下文
+    # push 方法将应用上下文绑定到当前上下文。
+    # 将当前上下文设置为 self 并存储上下文变量的令牌。
+    # 发送 appcontext_pushed 信号，通知应用上下文已被推送。
+    def push(self) -> None:
+        """Binds the app context to the current context."""
+        self._cv_tokens.append(_cv_app.set(self))
+        appcontext_pushed.send(self.app, _async_wrapper=self.app.ensure_sync)
+
+    # 弹出上下文
+    def pop(self, exc: BaseException | None = _sentinel) -> None:  # type: ignore
+        """Pops the app context."""
+        # 如果当前上下文令牌列表中只有一个令牌，则调用 do_teardown_appcontext 方法进行上下文清理。
+        try:
+            if len(self._cv_tokens) == 1:
+                if exc is _sentinel:
+                    exc = sys.exc_info()[1]
+                self.app.do_teardown_appcontext(exc)
+        # 重置上下文变量，将其从 _cv_tokens 中移除。
+        finally:
+            ctx = _cv_app.get()
+            _cv_app.reset(self._cv_tokens.pop())
+
+        # 如果弹出的上下文不是当前上下文，抛出 AssertionError 异常。
+        if ctx is not self:
+            raise AssertionError(
+                f"Popped wrong app context. ({ctx!r} instead of {self!r})"
+            )
+
+        # 发送 appcontext_popped 信号，通知应用上下文已被弹出。
+        appcontext_popped.send(self.app, _async_wrapper=self.app.ensure_sync)
+
+    # 上下文管理协议
+    # 实现上下文管理协议，使 AppContext 可以使用 with 语句。
+    # 在进入 with 语句时推送上下文，并返回自身。
+    def __enter__(self) -> AppContext:
+        self.push()
+        return self
+
+    # 在退出 with 语句时弹出上下文。接收异常类型、异常值和回溯对象作为参数。
+    def __exit__(
+        self,
+        exc_type: type | None,
+        exc_value: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.pop(exc_value)
 
 
+# 管理每个请求的上下文信息，包括请求对象、URL 适配器和会话。
+# 它在每个请求开始时创建并推送，在请求结束时弹出。通过上下文管理协议，
+# 可以方便地使用 with 语句来自动管理请求上下文的推送和弹出。
+# 不应直接使用这个类，而是通过 flask.Flask.test_request_context 和 
+# flask.Flask.request_context 来创建这个对象。
+# 请求上下文弹出时，会执行所有注册的清理函数。
+class RequestContext:
+    """The request context contains per-request information. The Flask
+    app creates and pushes it at the beginning of the request, then pops
+    it at the end of the request. It will create the URL adapter and
+    request object for the WSGI environment provided.
 
+    Do not attempt to use this class directly, instead use
+    :meth:`~flask.Flask.test_request_context` and
+    :meth:`~flask.Flask.request_context` to create this object.
+
+    When the request context is popped, it will evaluate all the
+    functions registered on the application for teardown execution
+    (:meth:`~flask.Flask.teardown_request`).
+
+    The request context is automatically popped at the end of the
+    request. When using the interactive debugger, the context will be
+    restored so ``request`` is still accessible. Similarly, the test
+    client can preserve the context after the request ends. However,
+    teardown functions may already have closed some resources such as
+    database connections.
+    """
+
+    # 初始化方法。
+    def __init__(
+        self,
+        app: Flask,
+        environ: WSGIEnvironment,
+        request: Request | None = None,
+        session: SessionMixin | None = None,
+    ) -> None:
+        self.app = app
+        # 如果未提供 request 参数，使用 app.request_class 创建一个新的请求对象，
+        # 并设置其 json_module 属性。
+        if request is None:
+            request = app.request_class(environ)
+            request.json_module = app.json
+        # 将 request 保存到实例变量 self.request 中。
+        self.request: Request = request
+        # 初始化 self.url_adapter 为 None。
+        self.url_adapter = None
+        # 尝试创建 URL 适配器并赋值给 self.url_adapter。如果出现 HTTPException 异常，
+        # 将异常保存到 self.request.routing_exception 中。
+        try:
+            self.url_adapter = app.create_url_adapter(self.request)
+        except HTTPException as e:
+            self.request.routing_exception = e
+        # 初始化 self.flashes 为 None，用于存储闪现消息。
+        self.flashes: list[tuple[str, str]] | None = None
+        # 将 session 参数保存到实例变量 self.session 中。
+        self.session: SessionMixin | None = session
+        # Functions that should be executed after the request on the response
+        # object.  These will be called before the regular "after_request"
+        # functions.
+        # 在响应对象上执行的函数列表。初始化 self._after_request_functions 为一个空列表，
+        # 用于存储请求后的回调函数。
+        self._after_request_functions: list[ft.AfterRequestCallable[t.Any]] = []
+
+        # 上下文变量令牌列表。初始化 self._cv_tokens 为一个空列表，用于存储上下文变量的令牌。
+        self._cv_tokens: list[
+            tuple[contextvars.Token[RequestContext], AppContext | None]
+        ] = []
+
+    # 创建一个当前请求上下文的副本，使用相同的请求对象。
+    # 返回新的 RequestContext 实例。
+    def copy(self) -> RequestContext:
+        """Creates a copy of this request context with the same request object.
+        This can be used to move a request context to a different greenlet.
+        Because the actual request object is the same this cannot be used to
+        move a request context to a different thread unless access to the
+        request object is locked.
+
+        .. versionadded:: 0.10
+
+        .. versionchanged:: 1.1
+           The current session object is used instead of reloading the original
+           data. This prevents `flask.session` pointing to an out-of-date object.
+        """
+        return self.__class__(
+            self.app,
+            environ=self.request.environ,
+            request=self.request,
+            session=self.session,
+        )
+
+    # 匹配请求的 URL，并设置请求的 url_rule 和 view_args。
+    # 可以被子类重写以钩入请求匹配过程。
+    def match_request(self) -> None:
+        """Can be overridden by a subclass to hook into the matching
+        of the request.
+        """
+        try:
+            result = self.url_adapter.match(return_rule=True)  # type: ignore
+            self.request.url_rule, self.request.view_args = result  # type: ignore
+        except HTTPException as e:
+            self.request.routing_exception = e
+
+    # 推送请求上下文。
+    def push(self) -> None:
+        # Before we push the request context we have to ensure that there
+        # is an application context.
+        # 在推送请求上下文之前，确保存在应用上下文。
+        app_ctx = _cv_app.get(None)
+
+        # 如果没有应用上下文或应用上下文不是当前应用的，创建并推送一个新的应用上下文。
+        if app_ctx is None or app_ctx.app is not self.app:
+            app_ctx = self.app.app_context()
+            app_ctx.push()
+        else:
+            app_ctx = None
+
+        # 将请求上下文设置为当前上下文，并保存上下文变量令牌。
+        self._cv_tokens.append((_cv_request.set(self), app_ctx))
+
+        # Open the session at the moment that the request context is available.
+        # This allows a custom open_session method to use the request context.
+        # Only open a new session if this is the first time the request was
+        # pushed, otherwise stream_with_context loses the session.
+        # 在请求上下文可用时打开会话。
+        if self.session is None:
+            session_interface = self.app.session_interface
+            self.session = session_interface.open_session(self.app, self.request)
+
+            if self.session is None:
+                self.session = session_interface.make_null_session(self.app)
+
+        # Match the request URL after loading the session, so that the
+        # session is available in custom URL converters.
+        # 加载会话后匹配请求的 URL，使会话在自定义 URL 转换器中可用。
+        if self.url_adapter is not None:
+            self.match_request()
+
+    # 弹出请求上下文并解除绑定。
+    def pop(self, exc: BaseException | None = _sentinel) -> None:  # type: ignore
+        """Pops the request context and unbinds it by doing that.  This will
+        also trigger the execution of functions registered by the
+        :meth:`~flask.Flask.teardown_request` decorator.
+
+        .. versionchanged:: 0.9
+           Added the `exc` argument.
+        """
+        clear_request = len(self._cv_tokens) == 1
+
+        # 如果这是最后一个上下文令牌，执行请求的清理操作。
+        try:
+            if clear_request:
+                if exc is _sentinel:
+                    exc = sys.exc_info()[1]
+                self.app.do_teardown_request(exc)
+
+                request_close = getattr(self.request, "close", None)
+                if request_close is not None:
+                    request_close()
+        # 重置上下文变量，并在请求结束时清除循环依赖。
+        finally:
+            ctx = _cv_request.get()
+            token, app_ctx = self._cv_tokens.pop()
+            _cv_request.reset(token)
+
+            # get rid of circular dependencies at the end of the request
+            # so that we don't require the GC to be active.
+            if clear_request:
+                ctx.request.environ["werkzeug.request"] = None
+
+            if app_ctx is not None:
+                app_ctx.pop(exc)
+
+            # 确保弹出的上下文是当前的上下文，否则抛出 AssertionError。
+            if ctx is not self:
+                raise AssertionError(
+                    f"Popped wrong request context. ({ctx!r} instead of {self!r})"
+                )
+
+    # 实现上下文管理协议，使 RequestContext 可以使用 with 语句。
+    # 进入 with 语句时推送上下文，退出时弹出上下文。
+    def __enter__(self) -> RequestContext:
+        self.push()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type | None,
+        exc_value: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.pop(exc_value)
+
+    # 返回请求上下文的字符串表示形式，包含请求的 URL 和方法，以及应用的名称。
+    def __repr__(self) -> str:
+        return (
+            f"<{type(self).__name__} {self.request.url!r}"
+            f" [{self.request.method}] of {self.app.name}>"
+        )
 
 
 
