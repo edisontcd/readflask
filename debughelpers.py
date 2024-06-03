@@ -152,42 +152,109 @@ def attach_enctype_error_multidict(request: Request) -> None:
 
 # 遍历 BaseLoader 对象的属性，并生成描述其类型和公开属性的字符串。
 # 它跳过私有属性和复杂类型的属性，只处理字符串、数值和布尔值，以及由字符串组成的元组或列表。
+# loader：一个 BaseLoader 对象，表示 Jinja2 模板引擎的加载器。
+# 返回一个字符串迭代器，逐行生成加载器的信息。
 def _dump_loader_info(loader: BaseLoader) -> t.Iterator[str]:
+    # 生成一行字符串，描述加载器对象的类及其所在的模块。
     yield f"class: {type(loader).__module__}.{type(loader).__name__}"
+    # 遍历 loader 对象的属性字典 (__dict__)，并按键排序。key 表示属性名，value 表示属性值。
     for key, value in sorted(loader.__dict__.items()):
+        # 如果属性名以下划线 _ 开头，跳过该属性。这通常表示私有属性，不需要包含在转储信息中。
         if key.startswith("_"):
             continue
+        # 如果属性值是元组或列表，检查其元素是否全是字符串。
         if isinstance(value, (tuple, list)):
+            # 如果不是，跳过该属性。
             if not all(isinstance(x, str) for x in value):
                 continue
+            # 生成属性名，并对其每个元素生成一行带缩进的字符串。
             yield f"{key}:"
             for item in value:
                 yield f"  - {item}"
             continue
+        # 如果属性值不是字符串、整数、浮点数或布尔值，则跳过该属性。
         elif not isinstance(value, (str, int, float, bool)):
             continue
+        # 对于基本类型的属性，生成一行字符串，包含属性名和属性值（使用 !r 以获得值的正式表示形式）。
         yield f"{key}: {value!r}"
 
 
+# 通过详细记录每次加载模板的尝试，帮助开发者理解为什么模板加载失败或成功。
+# 它提供了有关加载器、源对象和匹配结果的详细信息，并在必要时提供额外的提示。
+# 这些信息对于调试和解决模板加载问题非常有用。
+def explain_template_loading_attempts(
+    app: App,
+    # 要加载的模板的名称。
+    template: str,
+    # 一个包含所有加载模板尝试的信息的列表。每个尝试包含一个加载器（BaseLoader）、
+    # 一个源对象（Scaffold，可以是 App 或 Blueprint），以及一个三元组（如果没有找到匹配，则为 None）。
+    attempts: list[
+        tuple[
+            BaseLoader,
+            Scaffold,
+            tuple[str, str | None, t.Callable[[], bool] | None] | None,
+        ]
+    ],
+) -> None:
+    """This should help developers understand what failed"""
+    # 初始化信息列表 info，包含一个模板定位的起始信息。
+    info = [f"Locating template {template!r}:"]
+    # 初始化 total_found 计数器，用于记录找到的模板数量。
+    total_found = 0
+    blueprint = None
+    # 检查当前请求上下文中是否有蓝图，如果有则获取蓝图名称。
+    if request_ctx and request_ctx.request.blueprint is not None:
+        blueprint = request_ctx.request.blueprint
 
+    # 遍历每个加载尝试，获取加载器、源对象和三元组。
+    for idx, (loader, srcobj, triple) in enumerate(attempts):
+        # 如果是 App 对象，显示应用信息。
+        if isinstance(srcobj, App):
+            src_info = f"application {srcobj.import_name!r}"
+        # 如果是 Blueprint 对象，显示蓝图信息。
+        elif isinstance(srcobj, Blueprint):
+            src_info = f"blueprint {srcobj.name!r} ({srcobj.import_name})"
+        # 否则，显示源对象的字符串表示。
+        else:
+            src_info = repr(srcobj)
 
+        # 记录当前加载器的类型信息。
+        info.append(f"{idx + 1:5}: trying loader of {src_info}")
 
+        # 使用 _dump_loader_info 函数生成加载器的详细信息。
+        for line in _dump_loader_info(loader):
+            info.append(f"       {line}")
 
+        # 如果三元组为 None，记录没有匹配的信息。
+        if triple is None:
+            detail = "no match"
+        # 否则，记录找到的模板信息并增加计数器。
+        else:
+            detail = f"found ({triple[1] or '<string>'!r})"
+            total_found += 1
+        info.append(f"       -> {detail}")
 
+    # 根据找到的模板数量，记录错误或警告信息：
+    seems_fishy = False
+    # 如果没有找到模板，记录错误信息。
+    if total_found == 0:
+        info.append("Error: the template could not be found.")
+        seems_fishy = True
+    # 如果找到多个匹配的模板，记录警告信息。
+    elif total_found > 1:
+        info.append("Warning: multiple loaders returned a match for the template.")
+        seems_fishy = True
 
+    # 如果当前请求来自蓝图，并且有错误或警告信息，提供额外的提示，
+    # 指出模板可能放置在错误的文件夹中，并提供链接以获取更多信息。
+    if blueprint is not None and seems_fishy:
+        info.append(
+            "  The template was looked up from an endpoint that belongs"
+            f" to the blueprint {blueprint!r}."
+        )
+        info.append("  Maybe you did not place a template in the right folder?")
+        info.append("  See https://flask.palletsprojects.com/blueprints/#templates")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    # 将生成的所有信息记录到应用的日志中。
+    app.logger.info("\n".join(info))
 
