@@ -230,15 +230,145 @@ def make_response(*args: t.Any) -> Response:
     return current_app.make_response(args)
 
 
+# 用于生成指向应用中各个端点的URL。
+# 它可以处理内部和外部URL，并允许添加查询参数和锚点。
+def url_for(
+    # 要生成URL的端点名称。如果以.开头，则使用当前蓝图名称（如果有）。
+    endpoint: str,
+    *,
+    # 如果提供，则将其作为 #anchor 添加到URL。
+    _anchor: str | None = None,
+    # 如果提供，则生成与此方法关联的端点的URL。
+    _method: str | None = None,
+    # 如果提供，则生成与此方法关联的端点的URL。
+    _scheme: str | None = None,
+    # 如果提供，指定URL是内部的（False）还是外部的（True）。外部URL包括方案和域名。
+    # 在非活动请求中，URL默认是外部的。
+    _external: bool | None = None,
+    # 用于URL规则变量部分的值。未知的键将作为查询字符串参数附加，例如 ?a=b&c=d。
+    **values: t.Any,
+) -> str:
+    """Generate a URL to the given endpoint with the given values.
+
+    This requires an active request or application context, and calls
+    :meth:`current_app.url_for() <flask.Flask.url_for>`. See that method
+    for full documentation.
+
+    :param endpoint: The endpoint name associated with the URL to
+        generate. If this starts with a ``.``, the current blueprint
+        name (if any) will be used.
+    :param _anchor: If given, append this as ``#anchor`` to the URL.
+    :param _method: If given, generate the URL associated with this
+        method for the endpoint.
+    :param _scheme: If given, the URL will have this scheme if it is
+        external.
+    :param _external: If given, prefer the URL to be internal (False) or
+        require it to be external (True). External URLs include the
+        scheme and domain. When not in an active request, URLs are
+        external by default.
+    :param values: Values to use for the variable parts of the URL rule.
+        Unknown keys are appended as query string arguments, like
+        ``?a=b&c=d``.
+
+    .. versionchanged:: 2.2
+        Calls ``current_app.url_for``, allowing an app to override the
+        behavior.
+
+    .. versionchanged:: 0.10
+       The ``_scheme`` parameter was added.
+
+    .. versionchanged:: 0.9
+       The ``_anchor`` and ``_method`` parameters were added.
+
+    .. versionchanged:: 0.9
+       Calls ``app.handle_url_build_error`` on build errors.
+    """
+    return current_app.url_for(
+        endpoint,
+        _anchor=_anchor,
+        _method=_method,
+        _scheme=_scheme,
+        _external=_external,
+        **values,
+    )
 
 
+# 用于创建重定向响应对象。
+# 它根据当前应用的可用性，灵活地选择使用 Flask 的 redirect 方法或 Werkzeug 的默认重定向方法，
+def redirect(
+    location: str, code: int = 302, Response: type[BaseResponse] | None = None
+) -> BaseResponse:
+    """Create a redirect response object.
+
+    If :data:`~flask.current_app` is available, it will use its
+    :meth:`~flask.Flask.redirect` method, otherwise it will use
+    :func:`werkzeug.utils.redirect`.
+
+    :param location: The URL to redirect to.
+    :param code: The status code for the redirect.
+    :param Response: The response class to use. Not used when
+        ``current_app`` is active, which uses ``app.response_class``.
+
+    .. versionadded:: 2.2
+        Calls ``current_app.redirect`` if available instead of always
+        using Werkzeug's default ``redirect``.
+    """
+    # 如果 current_app 可用，调用其 redirect 方法，否则使用 Werkzeug 的默认重定向。
+    if current_app:
+        return current_app.redirect(location, code=code)
+
+    return _wz_redirect(location, code=code, Response=Response)
 
 
+# 用于引发特定状态码的 HTTP 异常。
+def abort(code: int | BaseResponse, *args: t.Any, **kwargs: t.Any) -> t.NoReturn:
+    # t.NoReturn，表示此函数不会正常返回，因为它总是引发异常。
+    """Raise an :exc:`~werkzeug.exceptions.HTTPException` for the given
+    status code.
+
+    If :data:`~flask.current_app` is available, it will call its
+    :attr:`~flask.Flask.aborter` object, otherwise it will use
+    :func:`werkzeug.exceptions.abort`.
+
+    :param code: The status code for the exception, which must be
+        registered in ``app.aborter``.
+    :param args: Passed to the exception.
+    :param kwargs: Passed to the exception.
+
+    .. versionadded:: 2.2
+        Calls ``current_app.aborter`` if available instead of always
+        using Werkzeug's default ``abort``.
+    """
+    # 如果 current_app 可用，调用其 abort 方法，否则使用 Werkzeug 的默认 abort 函数。
+    if current_app:
+        current_app.aborter(code, *args, **kwargs)
+
+    _wz_abort(code, *args, **kwargs)
 
 
+# 从 Jinja2 模板中动态加载和调用宏或变量的方法，以便在 Python 代码中调用该宏。
+def get_template_attribute(template_name: str, attribute: str) -> t.Any:
+    """Loads a macro (or variable) a template exports.  This can be used to
+    invoke a macro from within Python code.  If you for example have a
+    template named :file:`_cider.html` with the following contents:
 
+    .. sourcecode:: html+jinja
 
+       {% macro hello(name) %}Hello {{ name }}!{% endmacro %}
 
+    You can access this from Python code like this::
+
+        hello = get_template_attribute('_cider.html', 'hello')
+        return hello('World')
+
+    .. versionadded:: 0.2
+
+    :param template_name: the name of the template
+    :param attribute: the name of the variable of macro to access
+    """
+    # current_app.jinja_env.get_template 从当前应用的 Jinja2 环境中获取指定的模板。
+    # 使用 getattr 函数从模板模块中获取指定的属性（变量或宏）。
+    return getattr(current_app.jinja_env.get_template(template_name).module, attribute)
 
 
 
