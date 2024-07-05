@@ -371,13 +371,121 @@ def get_template_attribute(template_name: str, attribute: str) -> t.Any:
     return getattr(current_app.jinja_env.get_template(template_name).module, attribute)
 
 
+# 用于向用户显示临时消息。
+# 这些消息会在下一次请求时显示，常用于通知用户某些操作的结果（例如表单提交成功、错误提示等）。
+def flash(message: str, category: str = "message") -> None:
+    """Flashes a message to the next request.  In order to remove the
+    flashed message from the session and to display it to the user,
+    the template has to call :func:`get_flashed_messages`.
+
+    .. versionchanged:: 0.3
+       `category` parameter added.
+
+    :param message: the message to be flashed.
+    :param category: the category for the message.  The following values
+                     are recommended: ``'message'`` for any kind of message,
+                     ``'error'`` for errors, ``'info'`` for information
+                     messages and ``'warning'`` for warnings.  However any
+                     kind of string can be used as category.
+    """
+    # Original implementation:
+    #
+    #     session.setdefault('_flashes', []).append((category, message))
+    #
+    # This assumed that changes made to mutable structures in the session are
+    # always in sync with the session object, which is not true for session
+    # implementations that use external storage for keeping their keys/values.
+    # 从会话中获取现有的闪现消息。如果不存在，则返回一个空列表。
+    flashes = session.get("_flashes", [])
+    # 将新的消息（包括类别和内容）添加到消息列表中。
+    flashes.append((category, message))
+    # 将更新后的消息列表存回会话中。
+    session["_flashes"] = flashes
+    # 获取当前应用实例。
+    app = current_app._get_current_object()  # type: ignore
+    # 发送 message_flashed 信号，通知系统有新的消息被闪现。信号包含了应用实例、消息内容和类别。
+    message_flashed.send(
+        app,
+        _async_wrapper=app.ensure_sync,
+        message=message,
+        category=category,
+    )
 
 
+# 用于从会话中提取所有闪现消息，并根据需要返回带或不带类别的消息列表。
+def get_flashed_messages(
+    # with_categories：一个布尔值，指示是否返回类别，默认为 False。
+    # category_filter：一个可迭代对象，用于过滤要返回的消息类别，默认为空元组 ()。
+    with_categories: bool = False, category_filter: t.Iterable[str] = ()
+) -> list[str] | list[tuple[str, str]]:
+    """Pulls all flashed messages from the session and returns them.
+    Further calls in the same request to the function will return
+    the same messages.  By default just the messages are returned,
+    but when `with_categories` is set to ``True``, the return value will
+    be a list of tuples in the form ``(category, message)`` instead.
+
+    Filter the flashed messages to one or more categories by providing those
+    categories in `category_filter`.  This allows rendering categories in
+    separate html blocks.  The `with_categories` and `category_filter`
+    arguments are distinct:
+
+    * `with_categories` controls whether categories are returned with message
+      text (``True`` gives a tuple, where ``False`` gives just the message text).
+    * `category_filter` filters the messages down to only those matching the
+      provided categories.
+
+    See :doc:`/patterns/flashing` for examples.
+
+    .. versionchanged:: 0.3
+       `with_categories` parameter added.
+
+    .. versionchanged:: 0.9
+        `category_filter` parameter added.
+
+    :param with_categories: set to ``True`` to also receive categories.
+    :param category_filter: filter of categories to limit return values.  Only
+                            categories in the list will be returned.
+    """
+    # 从请求上下文中获取已缓存的闪现消息。
+    flashes = request_ctx.flashes
+    # 如果 flashes 为 None，表示尚未从会话中提取消息。
+    if flashes is None:
+        # 从会话中弹出 _flashes 键（即获取并删除该键），如果 _flashes 存在，返回其值；否则返回一个空列表。
+        flashes = session.pop("_flashes") if "_flashes" in session else []
+        # 将提取到的消息缓存到请求上下文中，以便在同一请求中多次调用时不重复提取。
+        request_ctx.flashes = flashes
+    # 使用 filter 函数过滤消息，只保留类别在 category_filter 中的消息。
+    if category_filter:
+        flashes = list(filter(lambda f: f[0] in category_filter, flashes))
+    # 如果 with_categories 为 False，只返回消息的文本部分。
+    if not with_categories:
+        # 返回消息的文本部分列表。
+        return [x[1] for x in flashes]
+    # 返回包含类别和消息文本的元组列表。
+    return flashes
 
 
+# 一个内部辅助函数，用于准备发送文件时所需的参数。
+# **kwargs 接受任意数量的关键字参数，这些参数会被传递给 Flask 的 send_file 函数。
+# 返回一个字典，其中包含了用于发送文件的参数。
+def _prepare_send_file_kwargs(**kwargs: t.Any) -> dict[str, t.Any]:
+    # 如果没有设置 max_age 参数，使用当前应用的 get_send_file_max_age 方法来设置默认值。
+    if kwargs.get("max_age") is None:
+        kwargs["max_age"] = current_app.get_send_file_max_age
 
-
-
+    # 更新关键字参数字典，添加以下参数。
+    kwargs.update(
+        # 设置为当前请求的环境变量 request.environ。
+        environ=request.environ,
+        # 从当前应用的配置中获取 USE_X_SENDFILE 参数。
+        use_x_sendfile=current_app.config["USE_X_SENDFILE"],
+        # 使用当前应用的响应类 current_app.response_class。
+        response_class=current_app.response_class,
+        # 设置为当前应用的根路径 current_app.root_path。
+        _root_path=current_app.root_path,  # type: ignore
+    )
+    # 返回更新后的关键字参数字典。
+    return kwargs
 
 
 
