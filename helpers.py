@@ -488,10 +488,296 @@ def _prepare_send_file_kwargs(**kwargs: t.Any) -> dict[str, t.Any]:
     return kwargs
 
 
+# 用于在应用中将文件发送到客户端。
+# 它封装了 Werkzeug 的 send_file 函数，并添加了一些 Flask 特有的参数处理，
+# 使得开发者可以更加灵活和方便地管理文件传输。
+# 通过使用 _prepare_send_file_kwargs 辅助函数，这个函数可以从当前请求和应用中获取必要的信息，
+# 并设置一些默认值，从而简化了文件发送的过程。
+def send_file(
+    # 文件路径（可以是 os.PathLike 或 str 类型）或文件对象（必须是以二进制模式打开的）。
+    path_or_file: os.PathLike[t.AnyStr] | str | t.BinaryIO,
+    # 文件的 MIME 类型，如果未提供，将尝试从文件名中检测。
+    mimetype: str | None = None,
+    # 指示浏览器是否应将文件保存为附件而不是直接显示。
+    as_attachment: bool = False,
+    # 浏览器保存文件时的默认名称，默认为传递的文件名。
+    download_name: str | None = None,
+    # 启用基于请求头的条件和范围响应，默认为 True。
+    conditional: bool = True,
+    # 计算文件的 ETag，可以是布尔值或字符串。
+    etag: bool | str = True,
+    # 文件的最后修改时间，可以是 datetime 对象、时间戳（整数或浮点数）或 None。
+    last_modified: datetime | int | float | None = None,
+    # 客户端应缓存文件的时间，以秒为单位。
+    max_age: None | (int | t.Callable[[str | None], int | None]) = None,
+) -> Response:
+    """Send the contents of a file to the client.
+
+    The first argument can be a file path or a file-like object. Paths
+    are preferred in most cases because Werkzeug can manage the file and
+    get extra information from the path. Passing a file-like object
+    requires that the file is opened in binary mode, and is mostly
+    useful when building a file in memory with :class:`io.BytesIO`.
+
+    Never pass file paths provided by a user. The path is assumed to be
+    trusted, so a user could craft a path to access a file you didn't
+    intend. Use :func:`send_from_directory` to safely serve
+    user-requested paths from within a directory.
+
+    If the WSGI server sets a ``file_wrapper`` in ``environ``, it is
+    used, otherwise Werkzeug's built-in wrapper is used. Alternatively,
+    if the HTTP server supports ``X-Sendfile``, configuring Flask with
+    ``USE_X_SENDFILE = True`` will tell the server to send the given
+    path, which is much more efficient than reading it in Python.
+
+    :param path_or_file: The path to the file to send, relative to the
+        current working directory if a relative path is given.
+        Alternatively, a file-like object opened in binary mode. Make
+        sure the file pointer is seeked to the start of the data.
+    :param mimetype: The MIME type to send for the file. If not
+        provided, it will try to detect it from the file name.
+    :param as_attachment: Indicate to a browser that it should offer to
+        save the file instead of displaying it.
+    :param download_name: The default name browsers will use when saving
+        the file. Defaults to the passed file name.
+    :param conditional: Enable conditional and range responses based on
+        request headers. Requires passing a file path and ``environ``.
+    :param etag: Calculate an ETag for the file, which requires passing
+        a file path. Can also be a string to use instead.
+    :param last_modified: The last modified time to send for the file,
+        in seconds. If not provided, it will try to detect it from the
+        file path.
+    :param max_age: How long the client should cache the file, in
+        seconds. If set, ``Cache-Control`` will be ``public``, otherwise
+        it will be ``no-cache`` to prefer conditional caching.
+
+    .. versionchanged:: 2.0
+        ``download_name`` replaces the ``attachment_filename``
+        parameter. If ``as_attachment=False``, it is passed with
+        ``Content-Disposition: inline`` instead.
+
+    .. versionchanged:: 2.0
+        ``max_age`` replaces the ``cache_timeout`` parameter.
+        ``conditional`` is enabled and ``max_age`` is not set by
+        default.
+
+    .. versionchanged:: 2.0
+        ``etag`` replaces the ``add_etags`` parameter. It can be a
+        string to use instead of generating one.
+
+    .. versionchanged:: 2.0
+        Passing a file-like object that inherits from
+        :class:`~io.TextIOBase` will raise a :exc:`ValueError` rather
+        than sending an empty file.
+
+    .. versionadded:: 2.0
+        Moved the implementation to Werkzeug. This is now a wrapper to
+        pass some Flask-specific arguments.
+
+    .. versionchanged:: 1.1
+        ``filename`` may be a :class:`~os.PathLike` object.
+
+    .. versionchanged:: 1.1
+        Passing a :class:`~io.BytesIO` object supports range requests.
+
+    .. versionchanged:: 1.0.3
+        Filenames are encoded with ASCII instead of Latin-1 for broader
+        compatibility with WSGI servers.
+
+    .. versionchanged:: 1.0
+        UTF-8 filenames as specified in :rfc:`2231` are supported.
+
+    .. versionchanged:: 0.12
+        The filename is no longer automatically inferred from file
+        objects. If you want to use automatic MIME and etag support,
+        pass a filename via ``filename_or_fp`` or
+        ``attachment_filename``.
+
+    .. versionchanged:: 0.12
+        ``attachment_filename`` is preferred over ``filename`` for MIME
+        detection.
+
+    .. versionchanged:: 0.9
+        ``cache_timeout`` defaults to
+        :meth:`Flask.get_send_file_max_age`.
+
+    .. versionchanged:: 0.7
+        MIME guessing and etag support for file-like objects was
+        removed because it was unreliable. Pass a filename if you are
+        able to, otherwise attach an etag yourself.
+
+    .. versionchanged:: 0.5
+        The ``add_etags``, ``cache_timeout`` and ``conditional``
+        parameters were added. The default behavior is to add etags.
+
+    .. versionadded:: 0.2
+    """
+    # werkzeug.utils.send_file 是 Werkzeug 提供的用于发送文件的实用函数。
+    # 它处理文件传输的实际细节，如设置响应头、处理文件对象等。
+    # 通过 ** 解包运算符将准备好的关键字参数传递给 send_file 函数。
+    return werkzeug.utils.send_file(  # type: ignore[return-value]
+        # _prepare_send_file_kwargs 是一个辅助函数，用于准备发送文件时所需的关键字参数。
+        # 它从当前请求和应用中获取必要的信息，并设置一些默认值。
+        # 调用 _prepare_send_file_kwargs 函数，传递发送文件所需的参数，
+        # 并将其结果作为关键字参数传递给 werkzeug.utils.send_file。
+        **_prepare_send_file_kwargs(
+            path_or_file=path_or_file,
+            environ=request.environ,
+            mimetype=mimetype,
+            as_attachment=as_attachment,
+            download_name=download_name,
+            conditional=conditional,
+            etag=etag,
+            last_modified=last_modified,
+            max_age=max_age,
+        )
+    )
 
 
+# 用于从指定目录中安全地发送文件。
+# 它封装了 Werkzeug 的 send_from_directory 函数，并添加了一些 Flask 特有的参数处理，
+# 使得开发者可以更加灵活和方便地管理文件传输。通过使用 _prepare_send_file_kwargs 辅助函数，
+# 这个函数可以从当前请求和应用中获取必要的信息，并设置一些默认值，从而简化了文件发送的过程。
+def send_from_directory(
+    # 指定文件所在的目录，相对于当前应用的根路径。
+    directory: os.PathLike[str] | str,
+    # 要发送的文件的路径，相对于 directory。
+    path: os.PathLike[str] | str,
+    # 传递给 send_file 函数的其他参数。
+    **kwargs: t.Any,
+) -> Response:
+    """Send a file from within a directory using :func:`send_file`.
+
+    .. code-block:: python
+
+        @app.route("/uploads/<path:name>")
+        def download_file(name):
+            return send_from_directory(
+                app.config['UPLOAD_FOLDER'], name, as_attachment=True
+            )
+
+    # 使用 werkzeug.security.safe_join 来确保路径的安全性。
+    # 如果最终路径不是一个存在的常规文件，会引发 404 错误。
+
+    This is a secure way to serve files from a folder, such as static
+    files or uploads. Uses :func:`~werkzeug.security.safe_join` to
+    ensure the path coming from the client is not maliciously crafted to
+    point outside the specified directory.
+
+    If the final path does not point to an existing regular file,
+    raises a 404 :exc:`~werkzeug.exceptions.NotFound` error.
+
+    :param directory: The directory that ``path`` must be located under,
+        relative to the current application's root path.
+    :param path: The path to the file to send, relative to
+        ``directory``.
+    :param kwargs: Arguments to pass to :func:`send_file`.
+
+    .. versionchanged:: 2.0
+        ``path`` replaces the ``filename`` parameter.
+
+    .. versionadded:: 2.0
+        Moved the implementation to Werkzeug. This is now a wrapper to
+        pass some Flask-specific arguments.
+
+    .. versionadded:: 0.5
+    """
+    # werkzeug.utils.send_from_directory 是 Werkzeug 提供的用于从目录中
+    # 安全发送文件的实用函数。它确保路径安全，避免路径遍历攻击，并处理文件传输的实际细节。
+    # 通过 ** 解包运算符将准备好的关键字参数传递给 send_from_directory 函数。
+    return werkzeug.utils.send_from_directory(  # type: ignore[return-value]
+        # _prepare_send_file_kwargs 是一个辅助函数，用于准备发送文件时所需的关键字参数。
+        # 它从当前请求和应用中获取必要的信息，并设置一些默认值。
+        directory, path, **_prepare_send_file_kwargs(**kwargs)
+    )
 
 
+# 用于找到包的根路径或包含模块的路径。如果找不到路径，则返回当前工作目录。
+# 这在应用程序需要知道特定模块或包的文件系统位置时非常有用。
+# 参数：import_name，类型为 str，表示要查找的包或模块的导入名称。
+def get_root_path(import_name: str) -> str:
+    """Find the root path of a package, or the path that contains a
+    module. If it cannot be found, returns the current working
+    directory.
+
+    Not to be confused with the value returned by :func:`find_package`.
+
+    :meta private:
+    """
+    # Module already imported and has a file attribute. Use that first.
+    # 从 sys.modules 中获取模块对象。
+    mod = sys.modules.get(import_name)
+
+    # 如果模块已导入且有 __file__ 属性，则返回该文件的目录。
+    if mod is not None and hasattr(mod, "__file__") and mod.__file__ is not None:
+        return os.path.dirname(os.path.abspath(mod.__file__))
+
+    # Next attempt: check the loader.
+    try:
+        # 尝试使用 importlib.util.find_spec 查找模块的规范（spec）。
+        spec = importlib.util.find_spec(import_name)
+
+        if spec is None:
+            raise ValueError
+    except (ImportError, ValueError):
+        loader = None
+    else:
+        loader = spec.loader
+
+    # Loader does not exist or we're referring to an unloaded main
+    # module or a main module without path (interactive sessions), go
+    # with the current working directory.
+    # 如果加载器不存在或是主模块（如交互式会话中的主模块），则返回当前工作目录。
+    if loader is None:
+        return os.getcwd()
+
+    # 如果加载器有 get_filename 方法，使用该方法获取文件路径。
+    if hasattr(loader, "get_filename"):
+        filepath = loader.get_filename(import_name)
+    else:
+        # 否则，使用 __import__ 导入模块并从 sys.modules 中获取模块对象，
+        # 然后获取其 __file__ 属性。
+        # Fall back to imports.
+        __import__(import_name)
+        mod = sys.modules[import_name]
+        filepath = getattr(mod, "__file__", None)
+
+        # If we don't have a file path it might be because it is a
+        # namespace package. In this case pick the root path from the
+        # first module that is contained in the package.
+        # 如果文件路径为空，抛出运行时错误，提示无法找到根路径。
+        if filepath is None:
+            raise RuntimeError(
+                "No root path can be found for the provided module"
+                f" {import_name!r}. This can happen because the module"
+                " came from an import hook that does not provide file"
+                " name information or because it's a namespace package."
+                " In this case the root path needs to be explicitly"
+                " provided."
+            )
+
+    # 返回文件路径的目录。
+    # filepath is import_name.py for a module, or __init__.py for a package.
+    return os.path.dirname(os.path.abspath(filepath))  # type: ignore[no-any-return]
+
+
+# 通过递归方式将包含点号的蓝图路径进行拆分，返回一个按层级排列的路径列表。
+# 装饰器用于缓存函数的结果，以提高性能。maxsize=None 表示缓存大小不限制，即缓存所有调用结果。
+@lru_cache(maxsize=None)
+# 参数：name，类型为 str，表示要拆分的蓝图路径。
+# 返回值类型：list[str]，返回一个字符串列表，包含拆分后的路径。
+def _split_blueprint_path(name: str) -> list[str]:
+    # 初始化一个名为 out 的列表，其中包含传入的 name 字符串。
+    out: list[str] = [name]
+
+    if "." in name:
+        # 使用 name.rpartition(".")[0] 获取最后一个点号之前的部分，
+        # 并递归调用 _split_blueprint_path，将结果扩展到 out 列表中。
+        # rpartition 方法会将字符串分成三部分：最后一个点号之前的部分、点号本身、
+        # 点号之后的部分。[0] 表示获取点号之前的部分。
+        out.extend(_split_blueprint_path(name.rpartition(".")[0]))
+
+    return out
 
 
 
