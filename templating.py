@@ -189,13 +189,160 @@ class DispatchingJinjaLoader(BaseLoader):
         return list(result)
 
 
+# 用于渲染模板，并在渲染之前和之后发送相应的信号。
+# context：类型为 dict[str, t.Any]，表示用于渲染模板的上下文数据。
+# 返回值类型：返回渲染后的字符串。
+def _render(app: Flask, template: Template, context: dict[str, t.Any]) -> str:
+    # 调用 Flask 应用的 update_template_context 方法，更新模板上下文。
+    # 这个方法通常会向上下文中添加一些全局变量，比如 request、session 和 g。
+    app.update_template_context(context)
+    # 发送 before_render_template 信号。在模板渲染之前触发，用于执行一些预处理操作。
+    # 传递的参数包括 Flask 应用实例、模板实例和上下文数据。
+    before_render_template.send(
+        app, _async_wrapper=app.ensure_sync, template=template, context=context
+    )
+    # 调用模板实例的 render 方法，使用上下文数据渲染模板。
+    rv = template.render(context)
+    # 发送 template_rendered 信号。在模板渲染之后触发，用于执行一些后处理操作。
+    template_rendered.send(
+        app, _async_wrapper=app.ensure_sync, template=template, context=context
+    )
+    return 
 
 
+# Flask 中用于渲染模板的关键方法。它通过获取当前应用实例，根据传入的模板名称
+# 或模板对象（或列表）获取模板，并调用 _render 方法渲染模板，最终返回渲染后的字符串。
+def render_template(
+    # template_name_or_list：类型为 str、Template 或者它们的列表，
+    # 表示要渲染的模板名称或模板对象。如果传入的是列表，则渲染第一个存在的模板。
+    template_name_or_list: str | Template | list[str | Template],
+    **context: t.Any,
+) -> str:
+    """Render a template by name with the given context.
+
+    :param template_name_or_list: The name of the template to render. If
+        a list is given, the first name to exist will be rendered.
+    :param context: The variables to make available in the template.
+    """
+    # 获取当前的 Flask 应用实例。
+    app = current_app._get_current_object()  # type: ignore[attr-defined]
+    # 调用应用实例的 Jinja 环境的 get_or_select_template 方法，
+    # 根据传入的模板名称或模板对象（或列表）获取模板。
+    # 如果传入的是列表，则返回第一个存在的模板。
+    template = app.jinja_env.get_or_select_template(template_name_or_list)
+    return _render(app, template, context)
+
+# 比较 render_template 和 render_template_string
+# render_template：从文件或模板对象加载模板。常用于静态模板文件。
+# render_template_string：从字符串加载模板。常用于动态生成的模板内容。
+
+# 用于从字符串渲染模板的关键方法。它通过获取当前应用实例，根据传入的模板源代码字符串
+# 创建模板对象，并调用 _render 方法渲染模板，最终返回渲染后的字符串。
+# 这个方法使得开发者可以方便地从字符串渲染模板，特别适用于动态生成的模板内容。
+# source：类型为 str，表示模板的源代码字符串。
+# context：上下文数据，将作为模板中的变量使用。
+def render_template_string(source: str, **context: t.Any) -> str:
+    """Render a template from the given source string with the given
+    context.
+
+    :param source: The source code of the template to render.
+    :param context: The variables to make available in the template.
+    """
+    app = current_app._get_current_object()  # type: ignore[attr-defined]
+    # 调用应用实例的 Jinja 环境的 from_string 方法，根据传入的模板源代码字符串创建模板对象。
+    template = app.jinja_env.from_string(source)
+    return _render(app, template, context)
 
 
+# 用于流式渲染模板，即逐步生成模板内容并将其发送给客户端，而不是一次性渲染整个模板。
+# 这对于处理大数据量或长时间生成的内容非常有用，因为它可以在生成内容的同时将其传输给客户端，
+# 而无需等待整个内容生成完成。
+def _stream(
+    # app：类型为 Flask，表示 Flask 应用实例。
+    # template：类型为 Template，表示 Jinja2 模板实例。
+    # context：类型为 dict[str, t.Any]，表示用于渲染模板的上下文数据。
+    app: Flask, template: Template, context: dict[str, t.Any]
+    # 返回值类型：返回一个字符串迭代器。
+) -> t.Iterator[str]:
+    # 调用 Flask 应用的 update_template_context 方法，更新模板上下文。
+    # 这个方法通常会向上下文中添加一些全局变量，比如 request、session 和 g。
+    app.update_template_context(context)
+    # 发送 before_render_template 信号。在模板渲染之前触发，用于执行一些预处理操作。
+    # 传递的参数包括 Flask 应用实例、模板实例和上下文数据。
+    before_render_template.send(
+        app, _async_wrapper=app.ensure_sync, template=template, context=context
+    )
+
+    # 定义内部生成器函数 generate，用于逐步生成模板内容。
+    def generate() -> t.Iterator[str]:
+        # 从模板的 generate 方法生成内容。
+        yield from template.generate(context)
+        # 生成完成后，发送 template_rendered 信号，用于执行一些后处理操作。
+        template_rendered.send(
+            app, _async_wrapper=app.ensure_sync, template=template, context=context
+        )
+
+    # 调用生成器函数 generate，获取生成器对象 rv。
+    rv = generate()
+
+    # 如果当前存在请求上下文（即正在处理 HTTP 请求），则使用 stream_with_context 方法包装生成器对象 rv。
+    # If a request context is active, keep it while generating.
+    if request:
+        rv = stream_with_context(rv)
+
+    # 返回生成器对象 rv。
+    return rv
 
 
+# 用于流式渲染模板，并返回一个字符串迭代器。
+# stream_template 方法与 render_template 类似，但它生成的是一个字符串迭代器，
+# 而不是一次性生成整个渲染后的字符串。这使得它非常适合在处理大数据量或长时间生成内容时，
+# 逐步将生成的内容发送给客户端，提高响应的及时性和性能。
+def stream_template(
+    # 类型为 str、Template 或者它们的列表，表示要渲染的模板名称或模板对象。
+    # 如果传入的是列表，则渲染第一个存在的模板。
+    template_name_or_list: str | Template | list[str | Template],
+    **context: t.Any,
+    # 返回一个字符串迭代器。
+) -> t.Iterator[str]:
+    """Render a template by name with the given context as a stream.
+    This returns an iterator of strings, which can be used as a
+    streaming response from a view.
+
+    :param template_name_or_list: The name of the template to render. If
+        a list is given, the first name to exist will be rendered.
+    :param context: The variables to make available in the template.
+
+    .. versionadded:: 2.2
+    """
+    # 使用 current_app._get_current_object() 获取当前的 Flask 应用实例。
+    # current_app 是一个代理对象，通过 _get_current_object() 方法获取实际的应用实例。
+    app = current_app._get_current_object()  # type: ignore[attr-defined]
+    # 调用应用实例的 Jinja 环境的 get_or_select_template 方法，
+    # 根据传入的模板名称或模板对象（或列表）获取模板。
+    # 如果传入的是列表，则返回第一个存在的模板。
+    template = app.jinja_env.get_or_select_template(template_name_or_list)
+    # 调用 _stream 方法，传入应用实例、模板对象和上下文数据，返回一个生成模板内容的字符串迭代器。
+    return _stream(app, template, context)
 
 
+# 用于从给定的模板源代码字符串和上下文数据中生成模板，并返回一个字符串迭代器。
+# 这可以用于在视图中生成流式响应，逐步将内容发送给客户端，而不是一次性生成和发送整个内容。
+# 这个方法适用于处理大数据量或长时间生成的内容，特别是当模板内容是动态生成的字符串时。
+def stream_template_string(source: str, **context: t.Any) -> t.Iterator[str]:
+    """Render a template from the given source string with the given
+    context as a stream. This returns an iterator of strings, which can
+    be used as a streaming response from a view.
 
+    :param source: The source code of the template to render.
+    :param context: The variables to make available in the template.
+
+    .. versionadded:: 2.2
+    """
+    # 获取当前的 Flask 应用实例。
+    app = current_app._get_current_object()  # type: ignore[attr-defined]
+    # 调用应用实例的 Jinja 环境的 from_string 方法，根据传入的模板源代码字符串创建模板对象。
+    template = app.jinja_env.from_string(source)
+    # 调用 _stream 方法，传入应用实例、模板对象和上下文数据，返回一个生成模板内容的字符串迭代器。
+    return _stream(app, template, context)
 
