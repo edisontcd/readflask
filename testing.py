@@ -144,10 +144,14 @@ class EnvironBuilder(werkzeug.test.EnvironBuilder):
 _werkzeug_version = ""
 
 
+# 获取当前安装的 Werkzeug 库的版本号，并将其缓存为全局变量。
+# 通过使用全局变量缓存版本号，它避免了在多次调用时重复执行获取版本号的操作，从而提高了性能。
+# Werkzeug 是 Flask 的底层 WSGI 工具包，Flask 使用它来处理 HTTP 请求和响应。
 def _get_werkzeug_version() -> str:
     global _werkzeug_version
 
     if not _werkzeug_version:
+        # importlib.metadata.version 是 Python 标准库中的一个方法，用于获取已安装的 Python 包的版本号。
         _werkzeug_version = importlib.metadata.version("werkzeug")
 
     return _werkzeug_version
