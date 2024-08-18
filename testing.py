@@ -156,6 +156,10 @@ def _get_werkzeug_version() -> str:
 
     return _werkzeug_version
 
+
+# FlaskClient 类是 Flask 测试客户端的实现，它继承自 Werkzeug 的 Client 类，
+# 并扩展了对 Flask 应用上下文的支持。这个类使得开发者可以在测试 Flask 应用时更方便
+# 地管理应用上下文和请求上下文，并在测试期间模拟客户端的行为，如发送请求、管理会话等。
 class FlaskClient(Client):
     """Works like a regular Werkzeug test client but has knowledge about
     Flask's contexts to defer the cleanup of the request context until
@@ -170,31 +174,30 @@ class FlaskClient(Client):
     Basic usage is outlined in the :doc:`/testing` chapter.
     """
 
+    # 声明了与 FlaskClient 关联的 Flask 应用实例。
     application: Flask
 
     def __init__(self, *args: t.Any, **kwargs: t.Any) -> None:
+        # 调用父类 Client 的构造函数，将所有传入参数传递给父类。
         super().__init__(*args, **kwargs)
-        # 这一行代码为类的实例属性 preserve_context 赋了一个初始值 False。
-        # 这个属性用于标志是否要保留上下文。
+        # 初始化 preserve_context 属性为 False，用于控制上下文是否在请求后保留。
         self.preserve_context = False
-        # 为类的实例属性 _new_contexts 赋了一个空列表作为初始值。
-        # 这个属性用于存储新的上下文管理器（context manager）。
+        # 初始化一个空列表，用于存储新创建的上下文管理器。
         self._new_contexts: list[t.ContextManager[t.Any]] = []
-        # ExitStack 是 Python 的上下文管理器，用于管理一组上下文管理器，
-        # 可以在退出上下文时自动清理资源。
+        # 创建一个 ExitStack 实例，用于管理多个上下文管理器。
         self._context_stack = ExitStack()
-        # 环境变量用于模拟请求的环境。
+        # 字典，存储请求的默认环境变量。
         self.environ_base = {
             "REMOTE_ADDR": "127.0.0.1",
             "HTTP_USER_AGENT": f"Werkzeug/{_get_werkzeug_version()}",
         }
 
-    # Python 装饰器，用于定义上下文管理器。它将函数装饰成一个生成器函数，
-    # 使其可以与 with 语句一起使用。
+    # 装饰器：将方法定义为上下文管理器，允许与 with 语句一起使用。
     @contextmanager
+    # 创建一个会话事务，使得在 with 语句块中可以修改客户端会话。
     def session_transaction(
         self, *args: t.Any, **kwargs: t.Any
-    ) -> t.Generator[SessionMixin, None, None]:
+    ) -> t.Iterator[SessionMixin]:
         """When used in combination with a ``with`` statement this opens a
         session transaction.  This can be used to modify the session that
         the test client uses.  Once the ``with`` block is left the session is
@@ -211,69 +214,73 @@ class FlaskClient(Client):
         :meth:`~flask.Flask.test_request_context` which are directly
         passed through.
         """
-
-        # self._cookies 是一个对象属性，它可能用于存储客户端的 cookies。
+        # 如果客户端禁用了 Cookies，则抛出 TypeError。
         if self._cookies is None:
             raise TypeError(
                 "Cookies are disabled. Create a client with 'use_cookies=True'."
             )
 
         app = self.application
+        # 通过 app.test_request_context 方法创建一个请求上下文 ctx，
         ctx = app.test_request_context(*args, **kwargs)
+        # 并将当前会话的 Cookies 添加到 WSGI 环境中。
         self._add_cookies_to_wsgi(ctx.request.environ)
 
-        # 这是一个上下文管理器的开始，它将进入 Flask 请求上下文（ctx）。
+        # 在请求上下文中调用 open_session 方法打开一个会话对象 sess。
         with ctx:
-            # 通过应用程序的会话接口 (app.session_interface) 来打开会话。
-            # 返回一个会话对象 (sess)。
             sess = app.session_interface.open_session(app, ctx.request)
 
+        # 如果无法打开会话，则抛出 RuntimeError。
         if sess is None:
             raise RuntimeError("Session backend did not open a session.")
 
-        # yield 语句将会话对象 (sess) 作为生成器的值返回。这允许在 with 
-        # 语句块中的代码中使用会话对象，例如在测试中对会话进行操作。
+        # 使用 yield 关键字将会话对象 sess 传递给 with 语句块，
+        # 并在退出 with 语句块时生成一个响应对象 resp。
         yield sess
-        # 创建一个应用程序响应对象 (resp)，通常用于在上下文结束后保存会话状态。
         resp = app.response_class()
 
+        # 检查会话是否为空：如果会话是空的（即 is_null_session 返回 True），则不保存会话，直接返回。
         if app.session_interface.is_null_session(sess):
             return
 
-        # 再次进入 Flask 请求上下文，这次是为了保存会话到响应中。
+        # 在请求上下文中调用 save_session 方法保存会话。
         with ctx:
             app.session_interface.save_session(app, sess, resp)
 
-        # 从响应中更新 cookies。它传递了主机名、请求路径和
-        # 响应头中的 Set-Cookie 部分作为参数。
+        # 根据响应头中的 Set-Cookie 更新客户端的 Cookies。
         self._update_cookies_from_response(
             ctx.request.host.partition(":")[0],
             ctx.request.path,
             resp.headers.getlist("Set-Cookie"),
         )
 
-    # 将两个环境对象合并成一个新的环境字典，并在需要时添加额外的调试上下文信息。
-    def _copy_environ(self, other):
+    # 复制并合并环境变量字典 other 和 environ_base，并在需要时保留上下文。
+    def _copy_environ(self, other: WSGIEnvironment) -> WSGIEnvironment:
+        # 合并 self.environ_base 和 other，生成一个新的环境变量字典 out。
         out = {**self.environ_base, **other}
 
+        # 如果 preserve_context 为 True，则在环境变量中添加 werkzeug.debug.preserve_context。
         if self.preserve_context:
             out["werkzeug.debug.preserve_context"] = self._new_contexts.append
 
         return out
 
-    # 创建一个请求对象，它使用 EnvironBuilder 来构建请求的环境，
-    # 并通过合并和复制环境参数来创建请求对象。
-    def _request_from_builder_args(self, args, kwargs):
+    # 从构造器参数中生成一个请求对象 BaseRequest。
+    def _request_from_builder_args(
+        self, args: tuple[t.Any, ...], kwargs: dict[str, t.Any]
+    ) -> BaseRequest:
+        # 将更新后的环境变量传递给 kwargs。
         kwargs["environ_base"] = self._copy_environ(kwargs.get("environ_base", {}))
+        # 创建一个 EnvironBuilder 对象，用于生成请求。
         builder = EnvironBuilder(self.application, *args, **kwargs)
 
+        # 通过 builder.get_request() 生成请求对象，并在最终关闭 builder。
         try:
             return builder.get_request()
         finally:
             builder.close()
 
-    # 发送测试请求，并根据请求的不同方式创建请求对象。它还负责处理上下文的保留和恢复，
-    # 以确保测试请求的环境隔离。最终，它返回测试响应对象，以供测试用例进一步分析和断言。
+    # 模拟客户端请求，返回 TestResponse 对象。
     def open(
         self,
         *args: t.Any,
@@ -281,12 +288,13 @@ class FlaskClient(Client):
         follow_redirects: bool = False,
         **kwargs: t.Any,
     ) -> TestResponse:
+        # 处理传入的参数：根据 args 的类型不同，处理请求对象的生成。
         if args and isinstance(
             args[0], (werkzeug.test.EnvironBuilder, dict, BaseRequest)
         ):
             if isinstance(args[0], werkzeug.test.EnvironBuilder):
                 builder = copy(args[0])
-                builder.environ_base = self._copy_environ(builder.environ_base or {})
+                builder.environ_base = self._copy_environ(builder.environ_base or {})  # type: ignore[arg-type]
                 request = builder.get_request()
             elif isinstance(args[0], dict):
                 request = EnvironBuilder.from_environ(
@@ -300,9 +308,13 @@ class FlaskClient(Client):
             # request is None
             request = self._request_from_builder_args(args, kwargs)
 
-        # 清除之前保留的上下文，以防止它们在重定向或多个请求中的同一块中保留。
+        # Pop any previously preserved contexts. This prevents contexts
+        # from being preserved across redirects or multiple requests
+        # within a single block.
+        # 关闭上下文栈：清除任何之前保留的上下文，防止跨请求的上下文混淆。
         self._context_stack.close()
 
+        # 调用父类 open 方法：发送请求并接收响应。将 Flask 应用的 JSON 模块分配给响应对象。
         response = super().open(
             request,
             buffered=buffered,
@@ -310,24 +322,24 @@ class FlaskClient(Client):
         )
         response.json_module = self.application.json  # type: ignore[assignment]
 
-        # 通过循环重新推送之前保留的上下文，以确保它们在请求期间保持不变。
+        # Re-push contexts that were preserved during the request.
+        # 重新推送保留的上下文：将 _new_contexts 中的上下文重新推送到上下文栈中。
         while self._new_contexts:
             cm = self._new_contexts.pop()
             self._context_stack.enter_context(cm)
 
         return response
 
-    # 用于进入 Flask 客户端的上下文，当进入 with 语句块时，会设置 preserve_context 属性为 True，
-    # 表示当前处于一个客户端上下文中。如果已经在客户端上下文中，则会引发异常以防止嵌套使用客户端。
+    # 当 FlaskClient 作为上下文管理器使用时调用，
+    # 设置 preserve_context 为 True，并返回自身实例。
     def __enter__(self) -> FlaskClient:
         if self.preserve_context:
             raise RuntimeError("Cannot nest client invocations")
         self.preserve_context = True
         return self
 
-    # 在退出 Flask 客户端的上下文时，将 preserve_context 属性设置为 False，
-    # 表示客户端上下文已经结束，并且关闭之前保留的上下文，以确保上下文资源得到释放。
-    # 这是一种用于管理上下文的良好做法，以确保资源的正确释放和环境的清理。
+    # 实现上下文管理协议的一部分，当 FlaskClient 对象退出 with 语句块时自动调用。
+    # 它用于清理在 with 语句块期间创建的上下文并执行相应的资源释放操作。
     def __exit__(
         self,
         exc_type: type | None,
@@ -337,7 +349,10 @@ class FlaskClient(Client):
         self.preserve_context = False
         self._context_stack.close()
 
-# 用于测试 Flask 应用程序的命令行界面（CLI）命令的测试运行器。
+
+# FlaskCliRunner 类通过继承 CliRunner 并添加与 Flask 应用集成的功能，
+# 使得测试 Flask 应用的命令行接口变得更加方便。它自动管理 Flask 应用的上下文，
+# 并允许开发者在测试时模拟 CLI 命令的执行。
 class FlaskCliRunner(CliRunner):
     """A :class:`~click.testing.CliRunner` for testing a Flask app's
     CLI commands. Typically created using
@@ -346,8 +361,12 @@ class FlaskCliRunner(CliRunner):
 
     def __init__(self, app: Flask, **kwargs: t.Any) -> None:
         self.app = app
+        # 调用父类 CliRunner 的构造函数，传递所有关键字参数 kwargs。
+        # 这允许继承父类的功能，同时保留 Flask 应用的上下文。
         super().__init__(**kwargs)
 
+    # 用于在一个隔离的环境中调用 CLI 命令。
+    # 它扩展了 click.testing.CliRunner.invoke 方法，增加了对 Flask 应用的支持。
     def invoke(  # type: ignore
         self, cli: t.Any = None, args: t.Any = None, **kwargs: t.Any
     ) -> t.Any:
@@ -365,11 +384,17 @@ class FlaskCliRunner(CliRunner):
 
         :return: a :class:`~click.testing.Result` object.
         """
+        # 如果 cli 为 None，则使用 Flask 应用实例的 cli 命令组 (self.app.cli) 作为默认值。
         if cli is None:
-            cli = self.app.cli  # type: ignore
+            cli = self.app.cli
 
+        # 如果关键字参数 kwargs 中没有传递 obj，则默认设置一个 ScriptInfo 对象。
+        # ScriptInfo 是一个存储脚本执行相关信息的对象，它通过 create_app 函数来提供 Flask 应用实例。
         if "obj" not in kwargs:
             kwargs["obj"] = ScriptInfo(create_app=lambda: self.app)
 
         return super().invoke(cli, args, **kwargs)
+
+
+
 
