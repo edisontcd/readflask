@@ -158,6 +158,122 @@ def _default(o: t.Any) -> t.Any:
     raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
 
 
+# 继承了 JSONProvider，用于处理 Flask 应用中的 JSON 序列化与反序列化操作。
+class DefaultJSONProvider(JSONProvider):
+    """Provide JSON operations using Python's built-in :mod:`json`
+    library. Serializes the following additional data types:
 
+    -   :class:`datetime.datetime` and :class:`datetime.date` are
+        serialized to :rfc:`822` strings. This is the same as the HTTP
+        date format.
+    -   :class:`uuid.UUID` is serialized to a string.
+    -   :class:`dataclasses.dataclass` is passed to
+        :func:`dataclasses.asdict`.
+    -   :class:`~markupsafe.Markup` (or any object with a ``__html__``
+        method) will call the ``__html__`` method to get a string.
+    """
+
+    # 静态方法，作为 json.dumps 的 default 参数使用。
+    # _default 函数的作用是在遇到无法直接序列化的数据类型时，提供如何处理这些类型的逻辑。
+    default: t.Callable[[t.Any], t.Any] = staticmethod(_default)  # type: ignore[assignment]
+    """Apply this function to any object that :meth:`json.dumps` does
+    not know how to serialize. It should return a valid JSON type or
+    raise a ``TypeError``.
+    """
+
+    # 用于控制是否在 JSON 序列化时将非 ASCII 字符替换为 Unicode 转义字符。
+    # 默认值为 True，会将非 ASCII 字符转义。可以设置为 False 以保持原始字符，
+    # 减少输出体积，提高性能。
+    ensure_ascii = True
+    """Replace non-ASCII characters with escape sequences. This may be
+    more compatible with some clients, but can be disabled for better
+    performance and size.
+    """
+
+    # 这个属性用于控制是否在 JSON 序列化时对字典的键进行排序。
+    # 启用此选项时，字典中的键必须都是字符串。排序对某些缓存场景有用，但会影响性能。
+    sort_keys = True
+    """Sort the keys in any serialized dicts. This may be useful for
+    some caching situations, but can be disabled for better performance.
+    When enabled, keys must all be strings, they are not converted
+    before sorting.
+    """
+
+    # 控制输出是否为紧凑格式。如果 compact 设置为 True，输出不会有额外的缩进、换行或空格；
+    # 如果为 False 或在调试模式下，它将以易读的格式输出。默认为 None，根据调试模式决定格式。
+    compact: bool | None = None
+    """If ``True``, or ``None`` out of debug mode, the :meth:`response`
+    output will not add indentation, newlines, or spaces. If ``False``,
+    or ``None`` in debug mode, it will use a non-compact representation.
+    """
+
+    # 定义返回响应的默认 MIME 类型，表示生成的响应内容为 application/json。
+    mimetype = "application/json"
+    """The mimetype set in :meth:`response`."""
+
+    # 该方法使用 Python 的 json.dumps 函数将 Python 对象序列化为 JSON 字符串。
+    def dumps(self, obj: t.Any, **kwargs: t.Any) -> str:
+        """Serialize data as JSON to a string.
+
+        Keyword arguments are passed to :func:`json.dumps`. Sets some
+        parameter defaults from the :attr:`default`,
+        :attr:`ensure_ascii`, and :attr:`sort_keys` attributes.
+
+        :param obj: The data to serialize.
+        :param kwargs: Passed to :func:`json.dumps`.
+        """
+        # 设置了一些默认的参数。
+        kwargs.setdefault("default", self.default)
+        kwargs.setdefault("ensure_ascii", self.ensure_ascii)
+        kwargs.setdefault("sort_keys", self.sort_keys)
+        return json.dumps(obj, **kwargs)
+
+    # 该方法用于将 JSON 字符串或字节反序列化为 Python 对象。它调用了标准库的 json.loads。
+    def loads(self, s: str | bytes, **kwargs: t.Any) -> t.Any:
+        """Deserialize data as JSON from a string or bytes.
+
+        :param s: Text or UTF-8 bytes.
+        :param kwargs: Passed to :func:`json.loads`.
+        """
+        return json.loads(s, **kwargs)
+
+    # 该方法是 Flask 中 jsonify 的核心逻辑，它将对象序列化为 JSON，
+    # 并返回一个 Flask Response 对象，设置 MIME 类型为 application/json。
+    def response(self, *args: t.Any, **kwargs: t.Any) -> Response:
+        """Serialize the given arguments as JSON, and return a
+        :class:`~flask.Response` object with it. The response mimetype
+        will be "application/json" and can be changed with
+        :attr:`mimetype`.
+
+        If :attr:`compact` is ``False`` or debug mode is enabled, the
+        output will be formatted to be easier to read.
+
+        Either positional or keyword arguments can be given, not both.
+        If no arguments are given, ``None`` is serialized.
+
+        :param args: A single value to serialize, or multiple values to
+            treat as a list to serialize.
+        :param kwargs: Treat as a dict to serialize.
+        """
+        # 根据传入的参数准备好需要序列化为 JSON 的对象，确保 args 和 kwargs 中只能传递一种形式。
+        obj = self._prepare_response_obj(args, kwargs)
+        # 初始化一个空字典 dump_args，用于存储 JSON 序列化时的参数，比如缩进或分隔符等。
+        dump_args: dict[str, t.Any] = {}
+
+        # 如果 compact 是 None 并且应用处于调试模式，或者 compact 显式设置为 False，
+        # 则使用缩进 (indent=2)，这样生成的 JSON 更容易阅读。
+        if (self.compact is None and self._app.debug) or self.compact is False:
+            dump_args.setdefault("indent", 2)
+        else:
+            # 使用紧凑的格式，定义分隔符为 , 和 :，不会有额外的空格和换行。
+            dump_args.setdefault("separators", (",", ":"))
+
+        # 调用 Flask 应用的 response_class 来创建响应对象。
+        # 使用 self.dumps 将 obj 序列化为 JSON 字符串，传入 dump_args 中的参数来控制格式。
+        # 在 JSON 字符串末尾添加一个换行符 \n，这在调试模式下有助于更清晰的输出。
+        # 返回的响应对象的 mimetype 被设置为 application/json（默认值，可以通过子类化进行修改）。
+        return self._app.response_class(
+            f"{self.dumps(obj, **dump_args)}\n", mimetype=self.mimetype
+        )
 
 
