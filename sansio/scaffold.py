@@ -67,7 +67,21 @@ T_url_value_preprocessor = t.TypeVar(
 T_route = t.TypeVar("T_route", bound=ft.RouteCallable)
 
 
+# 饰器函数 setupmethod，它用于包装类方法，并在调用该方法之前检查类是否已经完成了某些 "设置" 工作。
+# F 是一个泛型，表示任何类型的函数。
+def setupmethod(f: F) -> F:
+    # 通过 f.__name__，获取被装饰函数的名称 f_name。这通常用于后续调试或错误提示。
+    f_name = f.__name__
 
+    def wrapper_func(self: Scaffold, *args: t.Any, **kwargs: t.Any) -> t.Any:
+        # 检查当前类实例的设置是否已经完成。
+        self._check_setup_finished(f_name)
+        # 如果设置完成，调用原始函数 f 并返回其结果。
+        return f(self, *args, **kwargs)
+
+    # 将原始函数 f 的元数据（如函数名称、文档字符串等）复制到包装函数 wrapper_func 上。
+    # 这样即使函数被装饰，它的名称和文档字符串仍然保持原样。
+    return t.cast(F, update_wrapper(wrapper_func, f))
 
 
 
