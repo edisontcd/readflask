@@ -286,9 +286,33 @@ class Scaffold:
             raise NotImplementedError
 
 
+        # 定义了一个名为 static_folder 的只读属性，用于获取静态文件夹的绝对路径。
+        # @property 装饰器将方法转换为一个只读属性。
+        # 这意味着我们可以像访问类的普通属性那样访问 static_folder，而不需要像调用方法一样使用括号。
+        @property
+        def static_folder(self) -> str | None:
+            """The absolute path to the configured static folder. ``None``
+            if no static folder is set.
+            """
+            # self._static_folder 是 Scaffold 类的一个属性，表示静态文件夹的路径，相对 root_path 而言。
+            if self._static_folder is not None:
+                return os.path.join(self.root_path, self._static_folder)
+            else:
+                return None
 
+        # Python 属性的 setter 方法装饰器。它用于为之前定义的 static_folder 属性提供一个设置值的接口。
+        # 这使得 static_folder 属性可以像普通变量那样被重新赋值。
+        @static_folder.setter
+        def static_folder(self, value: str | os.PathLike[str] | None) -> None:
+            if value is not None:
+                # 将 value 转换为文件系统路径字符串。
+                # 如果 value 是一个 os.PathLike 对象（例如 pathlib.Path 实例），
+                # 它会被转换为一个字符串路径。
+                # rstrip(r"\/")：去除路径末尾的斜杠和反斜杠（例如 / 和 \），以保证路径格式一致。
+                value = os.fspath(value).rstrip(r"\/")
 
-
+            # 将处理后的 value 赋给内部属性 _static_folder。
+            self._static_folder = value
 
 
 
