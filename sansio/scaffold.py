@@ -315,12 +315,70 @@ class Scaffold:
             self._static_folder = value
 
 
+        # @property 把判断 static_folder 是否存在的逻辑变成了属性访问的方式，
+        # 调用时不需要括号，并返回一个布尔值。
+        @property
+        # 这个方法用于检查当前实例是否有一个 static_folder 属性。
+        def has_static_folder(self) -> bool:
+            """``True`` if :attr:`static_folder` is set.
+
+            .. versionadded:: 0.5
+            """
+            return self.static_folder is not None
 
 
+        # 是一个动态属性，用于表示静态资源文件的 URL 路径。
+        @property
+        def static_url_path(self) -> str | None:
+            """The URL prefix that the static route will be accessible from.
+
+            If it was not configured during init, it is derived from
+            :attr:`static_folder`.
+            """
+            # 首先检查私有属性 _static_url_path 是否已经有值。如果它不为 None，则直接返回该值。
+            if self._static_url_path is not None:
+                return self._static_url_path
+
+            # static_folder 已设置，则从 static_folder 推导出路径。
+            if self.static_folder is not None:
+                # 返回 static_folder 路径的最后一个部分（即目录名称）。
+                basename = os.path.basename(self.static_folder)
+                # 创建一个 URL 路径格式，并去除结尾的 /，以确保路径格式一致。
+                return f"/{basename}".rstrip("/")
+
+            return None
+
+        # 设置 static_url_path 属性的值。
+        @static_url_path.setter
+        # 处理值：如果传入的 value 不为 None，则去除该字符串末尾的斜杠 /。
+        def static_url_path(self, value: str | None) -> None:
+            if value is not None:
+                # 目的是：为了保持路径的一致性，去掉末尾可能出现的多余 /。
+                value = value.rstrip("/")
+
+            self._static_url_path = value
 
 
+        # @cached_property 是一个装饰器，用来将方法的返回值缓存起来。
+        # 第一次访问时执行方法并缓存结果，之后的访问直接返回缓存的结果，而不再调用方法。
+        # 这在需要重复计算、但结果不会改变的属性中非常有用。
+        # 适合那些需要在实例生命周期中只初始化一次的属性，避免重复计算或加载（如模板加载器）。
+        @cached_property
+        def jinja_loader(self) -> BaseLoader | None:
+            """The Jinja loader for this object's templates. By default this
+            is a class :class:`jinja2.loaders.FileSystemLoader` to
+            :attr:`template_folder` if it is set.
 
-
+            .. versionadded:: 0.5
+            """
+            if self.template_folder is not None:
+                # FileSystemLoader 是 Jinja 的模板加载器，用于从文件系统中加载模板。
+                # os.path.join(self.root_path, self.template_folder) 
+                # 通过拼接 root_path 和 template_folder 构成模板文件夹的完整路径，
+                # 传递给 FileSystemLoader 来创建加载器。
+                return FileSystemLoader(os.path.join(self.root_path, self.template_folder))
+            else:
+                return None
 
 
 
