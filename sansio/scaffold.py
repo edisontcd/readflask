@@ -381,11 +381,62 @@ class Scaffold:
                 return None
 
 
+        # 方法名前加了 _，意味着这是一个私有方法，通常仅在类的内部使用，不用于公开接口。
+        # 用于为单个 HTTP 方法（如 "GET"、"POST"）创建路由。
+        def _method_route(
+            self,
+            # 传入的 HTTP 方法（例如 "GET", "POST" 等）。
+            method: str,
+            # 这是 URL 路径规则，用于为某个路径设置路由。
+            rule: str,
+            options: dict[str, t.Any],
+        ) -> t.Callable[[T_route], T_route]:
+            # 判断 options 字典中是否包含 methods 参数。
+            if "methods" in options:
+                raise TypeError("Use the 'route' decorator to use the 'methods' argument.")
+
+            return self.route(rule, methods=[method], **options)
 
 
+        # 为HTTP GET请求提供了快捷方式，简化了路由的定义。
+        # @setupmethod 是一个自定义的装饰器，通常用于框架内的方法来指示这些方法是设置相关的
+        #（例如，用于配置路由或初始化）。它可以用于确保这些方法仅在应用启动时调用。
+        @setupmethod
+        def get(self, rule: str, **options: t.Any) -> t.Callable[[T_route], T_route]:
+            """Shortcut for :meth:`route` with ``methods=["GET"]``.
 
+            .. versionadded:: 2.0
+            """
+            # _method_route 返回的是一个装饰器函数，这个函数可以用于将指定路径的 GET 请求与视图函数关联。
+            return self._method_route("GET", rule, options)
 
+        # 为HTTP POST请求提供了快捷方式，简化了路由的定义。
+        @setupmethod
+        def post(self, rule: str, **options: t.Any) -> t.Callable[[T_route], T_route]:
+            """Shortcut for :meth:`route` with ``methods=["POST"]``.
 
+            .. versionadded:: 2.0
+            """
+            # 返回一个装饰器函数，用于绑定指定路径和 POST 请求的处理函数。
+            return self._method_route("POST", rule, options)
+
+        # 为HTTP PUT请求提供了快捷方式，简化了路由的定义。
+        @setupmethod
+        def put(self, rule: str, **options: t.Any) -> t.Callable[[T_route], T_route]:
+            """Shortcut for :meth:`route` with ``methods=["PUT"]``.
+
+            .. versionadded:: 2.0
+            """
+            return self._method_route("PUT", rule, options)
+
+        # 为HTTP DELETE请求提供了快捷方式，简化了路由的定义。
+        @setupmethod
+        def delete(self, rule: str, **options: t.Any) -> t.Callable[[T_route], T_route]:
+            """Shortcut for :meth:`route` with ``methods=["DELETE"]``.
+
+            .. versionadded:: 2.0
+            """
+            return self._method_route("DELETE", rule, options)
 
 
 
