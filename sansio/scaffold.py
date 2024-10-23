@@ -438,11 +438,149 @@ class Scaffold:
             """
             return self._method_route("DELETE", rule, options)
 
+        # 提供了为 HTTP PATCH 请求定义路由的快捷方式。
+        @setupmethod
+        def patch(self, rule: str, **options: t.Any) -> t.Callable[[T_route], T_route]:
+            """Shortcut for :meth:`route` with ``methods=["PATCH"]``.
+
+            .. versionadded:: 2.0
+            """
+            return self._method_route("PATCH", rule, options)
+
+        # 一个更通用的装饰器，用于为任何 URL 路径注册视图函数。
+        @setupmethod
+        def route(self, rule: str, **options: t.Any) -> t.Callable[[T_route], T_route]:
+            """Decorate a view function to register it with the given URL
+            rule and options. Calls :meth:`add_url_rule`, which has more
+            details about the implementation.
+
+            .. code-block:: python
+
+                @app.route("/")
+                def index():
+                    return "Hello, World!"
+
+            See :ref:`url-route-registrations`.
+
+            The endpoint name for the route defaults to the name of the view
+            function if the ``endpoint`` parameter isn't passed.
+
+            The ``methods`` parameter defaults to ``["GET"]``. ``HEAD`` and
+            ``OPTIONS`` are added automatically.
+
+            :param rule: The URL rule string.
+            :param options: Extra options passed to the
+                :class:`~werkzeug.routing.Rule` object.
+            """
+
+            # 实际装饰视图函数的内部函数。
+            def decorator(f: T_route) -> T_route:
+                # 从 options 字典中弹出（移除并返回）endpoint 参数，
+                # 如果没有传入 endpoint，则默认为 None。
+                endpoint = options.pop("endpoint", None)
+                # 将路由规则、端点名称、视图函数和其他选项注册到路由系统中。
+                self.add_url_rule(rule, endpoint, f, **options)
+                return f
+
+            return decorator
+
+        # 用于在 Flask-like 框架中注册一个 URL 规则，并将其与指定的视图函数（view_func）关联。
+        @setupmethod
+        def add_url_rule(
+            self,
+            rule: str,
+            endpoint: str | None = None,
+            # 处理请求的视图函数。如果没有指定视图函数，路由可以暂时只注册路径，稍后通过端点进行关联。
+            view_func: ft.RouteCallable | None = None,
+            provide_automatic_options: bool | None = None,
+            **options: t.Any,
+        ) -> None:
+            """Register a rule for routing incoming requests and building
+            URLs. The :meth:`route` decorator is a shortcut to call this
+            with the ``view_func`` argument. These are equivalent:
+
+            .. code-block:: python
+
+                @app.route("/")
+                def index():
+                    ...
+
+            .. code-block:: python
+
+                def index():
+                    ...
+
+                app.add_url_rule("/", view_func=index)
+
+            See :ref:`url-route-registrations`.
+
+            The endpoint name for the route defaults to the name of the view
+            function if the ``endpoint`` parameter isn't passed. An error
+            will be raised if a function has already been registered for the
+            endpoint.
+
+            The ``methods`` parameter defaults to ``["GET"]``. ``HEAD`` is
+            always added automatically, and ``OPTIONS`` is added
+            automatically by default.
+
+            ``view_func`` does not necessarily need to be passed, but if the
+            rule should participate in routing an endpoint name must be
+            associated with a view function at some point with the
+            :meth:`endpoint` decorator.
+
+            .. code-block:: python
+
+                app.add_url_rule("/", endpoint="index")
+
+                @app.endpoint("index")
+                def index():
+                    ...
+
+            If ``view_func`` has a ``required_methods`` attribute, those
+            methods are added to the passed and automatic methods. If it
+            has a ``provide_automatic_methods`` attribute, it is used as the
+            default if the parameter is not passed.
+
+            :param rule: The URL rule string.
+            :param endpoint: The endpoint name to associate with the rule
+                and view function. Used when routing and building URLs.
+                Defaults to ``view_func.__name__``.
+            :param view_func: The view function to associate with the
+                endpoint name.
+            :param provide_automatic_options: Add the ``OPTIONS`` method and
+                respond to ``OPTIONS`` requests automatically.
+            :param options: Extra options passed to the
+                :class:`~werkzeug.routing.Rule` object.
+            """
+            raise NotImplementedError
 
 
+        # 将视图函数注册到特定的端点。
+        @setupmethod
+        def endpoint(self, endpoint: str) -> t.Callable[[F], F]:
+            """Decorate a view function to register it for the given
+            endpoint. Used if a rule is added without a ``view_func`` with
+            :meth:`add_url_rule`.
 
+            .. code-block:: python
 
+                app.add_url_rule("/ex", endpoint="example")
 
+                @app.endpoint("example")
+                def example():
+                    ...
+
+            :param endpoint: The endpoint name to associate with the view
+                function.
+            """
+
+            # 这个内部函数 decorator 是实际的装饰器，用于将视图函数 f 与指定的端点 endpoint 关联。
+            def decorator(f: F) -> F:
+                # 是一个字典，存储了所有已注册的端点与视图函数的映射关系。
+                self.view_functions[endpoint] = f
+                return f
+
+            return decorator
 
 
 
