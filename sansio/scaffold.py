@@ -583,6 +583,119 @@ class Scaffold:
             return decorator
 
 
+        # 注册一个函数，在每个请求处理之前运行。
+        # 通常用于执行一些预处理操作，例如打开数据库连接或从会话中加载当前用户。
+        @setupmethod
+        def before_request(self, f: T_before_request) -> T_before_request:
+            """Register a function to run before each request.
+
+            For example, this can be used to open a database connection, or
+            to load the logged in user from the session.
+
+            .. code-block:: python
+
+                @app.before_request
+                def load_user():
+                    if "user_id" in session:
+                        g.user = db.session.get(session["user_id"])
+
+            The function will be called without any arguments. If it returns
+            a non-``None`` value, the value is handled as if it was the
+            return value from the view, and further request handling is
+            stopped.
+
+            This is available on both app and blueprint objects. When used on an app, this
+            executes before every request. When used on a blueprint, this executes before
+            every request that the blueprint handles. To register with a blueprint and
+            execute before every request, use :meth:`.Blueprint.before_app_request`.
+            """
+            # before_request_funcs 字典：这是一个存储所有 before_request 注册函数的字典。
+            # 如果字典中还没有 None 键，就为它创建一个空列表。
+            # 将传入的函数 f 添加到列表中。
+            self.before_request_funcs.setdefault(None, []).append(f)
+            return f
+
+
+        # 注册一个函数，在每次请求处理完成并生成响应后执行。
+        # 注册的函数会接收响应对象作为参数，并且可以对响应对象进行修改或替换，然后返回修改后的响应。
+        @setupmethod
+        def after_request(self, f: T_after_request) -> T_after_request:
+            """Register a function to run after each request to this object.
+
+            The function is called with the response object, and must return
+            a response object. This allows the functions to modify or
+            replace the response before it is sent.
+
+            If a function raises an exception, any remaining
+            ``after_request`` functions will not be called. Therefore, this
+            should not be used for actions that must execute, such as to
+            close resources. Use :meth:`teardown_request` for that.
+
+            This is available on both app and blueprint objects. When used on an app, this
+            executes after every request. When used on a blueprint, this executes after
+            every request that the blueprint handles. To register with a blueprint and
+            execute after every request, use :meth:`.Blueprint.after_app_request`.
+            """
+            self.after_request_funcs.setdefault(None, []).append(f)
+            return f
+
+
+        # 注册一个函数，在请求上下文（request context）弹出时执行。
+        # 这个函数会在每次请求结束时调用，用于清理资源或执行其他与请求结束相关的操作。
+        # 如果请求因为未处理的异常结束，函数会接收到异常对象。
+        @setupmethod
+        def teardown_request(self, f: T_teardown) -> T_teardown:
+            """Register a function to be called when the request context is
+            popped. Typically this happens at the end of each request, but
+            contexts may be pushed manually as well during testing.
+
+            .. code-block:: python
+
+                with app.test_request_context():
+                    ...
+
+            When the ``with`` block exits (or ``ctx.pop()`` is called), the
+            teardown functions are called just before the request context is
+            made inactive.
+
+            When a teardown function was called because of an unhandled
+            exception it will be passed an error object. If an
+            :meth:`errorhandler` is registered, it will handle the exception
+            and the teardown will not receive it.
+
+            Teardown functions must avoid raising exceptions. If they
+            execute code that might fail they must surround that code with a
+            ``try``/``except`` block and log any errors.
+
+            The return values of teardown functions are ignored.
+
+            This is available on both app and blueprint objects. When used on an app, this
+            executes after every request. When used on a blueprint, this executes after
+            every request that the blueprint handles. To register with a blueprint and
+            execute after every request, use :meth:`.Blueprint.teardown_app_request`.
+            """
+            self.teardown_request_funcs.setdefault(None, []).append(f)
+            return f
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
