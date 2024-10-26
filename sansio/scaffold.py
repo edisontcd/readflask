@@ -678,13 +678,119 @@ class Scaffold:
             return f
 
 
+        # 用于注册一个模板上下文处理器函数，该函数会在渲染模板之前运行。
+        # 常用于在模板中提供一些全局的变量或常用数据（如用户信息、当前时间等），便于在模板中直接访问。
+        @setupmethod
+        def context_processor(
+            self,
+            f: T_template_context_processor,
+        ) -> T_template_context_processor:
+            """Registers a template context processor function. These functions run before
+            rendering a template. The keys of the returned dict are added as variables
+            available in the template.
+
+            This is available on both app and blueprint objects. When used on an app, this
+            is called for every rendered template. When used on a blueprint, this is called
+            for templates rendered from the blueprint's views. To register with a blueprint
+            and affect every template, use :meth:`.Blueprint.app_context_processor`.
+            """
+            self.template_context_processors[None].append(f)
+            return f
 
 
+        # 用于注册一个 URL 值预处理器函数。
+        # 该函数会在请求匹配 URL 后和视图函数调用前运行，并可以对 URL 中提取的参数进行修改。
+        # 常用于提取 URL 参数中的公共数据并存储到全局对象（如 g 对象）中，避免将其显式传递给每个视图函数。
+        @setupmethod
+        def url_value_preprocessor(
+            self,
+            f: T_url_value_preprocessor,
+        ) -> T_url_value_preprocessor:
+            """Register a URL value preprocessor function for all view
+            functions in the application. These functions will be called before the
+            :meth:`before_request` functions.
+
+            The function can modify the values captured from the matched url before
+            they are passed to the view. For example, this can be used to pop a
+            common language code value and place it in ``g`` rather than pass it to
+            every view.
+
+            The function is passed the endpoint name and values dict. The return
+            value is ignored.
+
+            This is available on both app and blueprint objects. When used on an app, this
+            is called for every request. When used on a blueprint, this is called for
+            requests that the blueprint handles. To register with a blueprint and affect
+            every request, use :meth:`.Blueprint.app_url_value_preprocessor`.
+            """
+            self.url_value_preprocessors[None].append(f)
+            return f
+
+        
+        # 用于注册一个 URL 默认值回调函数，在生成 URL 时添加或修改默认参数。
+        # 可用于在构建 URL 时自动填充一些常用的参数值（例如语言或版本），从而简化 URL 生成。
+        @setupmethod
+        def url_defaults(self, f: T_url_defaults) -> T_url_defaults:
+            """Callback function for URL defaults for all view functions of the
+            application.  It's called with the endpoint and values and should
+            update the values passed in place.
+
+            This is available on both app and blueprint objects. When used on an app, this
+            is called for every request. When used on a blueprint, this is called for
+            requests that the blueprint handles. To register with a blueprint and affect
+            every request, use :meth:`.Blueprint.app_url_defaults`.
+            """
+            self.url_default_functions[None].append(f)
+            return f
 
 
+        # 用于注册一个错误处理函数，可以指定 HTTP 状态码或异常类型。
+        # 函数将在匹配的错误或异常发生时调用。
+        # 常用于自定义 HTTP 错误页（如 404、500 错误页面）或为特定异常类型提供自定义响应。
+        @setupmethod
+        def errorhandler(
+            self, code_or_exception: type[Exception] | int
+        ) -> t.Callable[[T_error_handler], T_error_handler]:
+            """Register a function to handle errors by code or exception class.
 
+            A decorator that is used to register a function given an
+            error code.  Example::
 
+                @app.errorhandler(404)
+                def page_not_found(error):
+                    return 'This page does not exist', 404
 
+            You can also register handlers for arbitrary exceptions::
+
+                @app.errorhandler(DatabaseError)
+                def special_exception_handler(error):
+                    return 'Database connection failed', 500
+
+            This is available on both app and blueprint objects. When used on an app, this
+            can handle errors from every request. When used on a blueprint, this can handle
+            errors from requests that the blueprint handles. To register with a blueprint
+            and affect every request, use :meth:`.Blueprint.app_errorhandler`.
+
+            .. versionadded:: 0.7
+                Use :meth:`register_error_handler` instead of modifying
+                :attr:`error_handler_spec` directly, for application wide error
+                handlers.
+
+            .. versionadded:: 0.7
+                One can now additionally also register custom exception types
+                that do not necessarily have to be a subclass of the
+                :class:`~werkzeug.exceptions.HTTPException` class.
+
+            :param code_or_exception: the code as integer for the handler, or
+                                  an arbitrary exception
+            """
+
+            # 是实际的装饰器函数，用于将错误处理函数 f 与指定的错误代码或异常类型关联。
+            def decorator(f: T_error_handler) -> T_error_handler:
+                self.register_error_handler(code_or_exception, f)
+                return f
+
+            return decorator
 
 
 
