@@ -869,6 +869,49 @@ class Scaffold:
                 return exc_class, None
 
 
+# 用于提取给定视图函数的名称，以便用作默认的端点名称。
+# 参数 view_func 是一个可调用的视图函数，类型为 RouteCallable，通常表示处理请求的函数。
+# 返回一个字符串，表示端点名称。
+def _endpoint_from_view_func(view_func: ft.RouteCallable) -> str:
+    """Internal helper that returns the default endpoint for a given
+    function.  This always is the function name.
+    """
+    # 断言检查：确保 view_func 不是 None。如果为 None，则抛出异常，提示必须提供视图函数。
+    assert view_func is not None, "expected view func if endpoint is not provided."
+    # 直接返回 view_func 的名称，即 __name__ 属性，
+    # 这是 Python 中每个函数都有的一个属性，用于获取函数的名称。
+    return view_func.__name__
+
+
+# 用于检查给定的路径是否相对于指定的基路径。
+def _path_is_relative_to(path: pathlib.PurePath, base: str) -> bool:
+    # Path.is_relative_to doesn't exist until Python 3.9
+    try:
+        path.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
