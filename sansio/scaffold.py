@@ -793,8 +793,80 @@ class Scaffold:
             return decorator
 
 
+        # 用于注册错误处理程序，可以处理特定的 HTTP 状态码或异常类型，提供了一种非装饰器的使用方式。
+        # 常用于在应用初始化时为特定错误或异常设置响应，例如自定义错误页或记录异常。
+        @setupmethod
+        def register_error_handler(
+            self,
+            code_or_exception: type[Exception] | int,
+            f: ft.ErrorHandlerCallable,
+        ) -> None:
+            """Alternative error attach function to the :meth:`errorhandler`
+            decorator that is more straightforward to use for non decorator
+            usage.
+
+            .. versionadded:: 0.7
+            """
+            # 从 code_or_exception 参数中提取异常类和状态码。
+            # exc_class 是异常类，code 是对应的 HTTP 状态码。
+            exc_class, code = self._get_exc_class_and_code(code_or_exception)
+            # 将错误处理函数 f 注册到相应的状态码和异常类下。
+            self.error_handler_spec[None][code][exc_class] = f
 
 
+        # 用于获取指定的异常类和其状态码，确保处理的错误是有效的 HTTP 错误代码或异常类型。
+        # 常用于注册错误处理程序时，以确保处理的异常类或代码是有效的，从而正确处理错误情况。
+        @staticmethod
+        def _get_exc_class_and_code(
+            # 参数可以是异常类（类型）或 HTTP 状态码（整数）。
+            exc_class_or_code: type[Exception] | int,
+        # 返回一个元组，包含异常类和可选的状态码。
+        ) -> tuple[type[Exception], int | None]:
+            """Get the exception class being handled. For HTTP status codes
+            or ``HTTPException`` subclasses, return both the exception and
+            status code.
+
+            :param exc_class_or_code: Any exception class, or an HTTP status
+            code as an integer.
+            """
+            # 声明变量 exc_class，类型为异常类。
+            exc_class: type[Exception]
+
+            # 如果 exc_class_or_code 是整数，尝试从 default_exceptions 字典中获取对应的异常类。
+            if isinstance(exc_class_or_code, int):
+                try:
+                    exc_class = default_exceptions[exc_class_or_code]
+                except KeyError:
+                    raise ValueError(
+                        f"'{exc_class_or_code}' is not a recognized HTTP"
+                        " error code. Use a subclass of HTTPException with"
+                     " that code instead."
+                    ) from None
+            # 如果不是整数，直接将其赋值给 exc_class。
+            else:
+                exc_class = exc_class_or_code
+
+            # 如果 exc_class 是异常的实例，抛出 TypeError，提示只能注册异常类。
+            if isinstance(exc_class, Exception):
+                raise TypeError(
+                    f"{exc_class!r} is an instance, not a class. Handlers"
+                    " can only be registered for Exception classes or HTTP"
+                    " error codes."
+                )
+
+            # 如果 exc_class 不是 Exception 的子类，抛出 ValueError。
+            if not issubclass(exc_class, Exception):
+                raise ValueError(
+                    f"'{exc_class.__name__}' is not a subclass of Exception."
+                    " Handlers can only be registered for Exception classes"
+                    " or HTTP error codes."
+                )
+
+            # 如果 exc_class 是 HTTPException 的子类，返回 exc_class 和对应的状态码。
+            if issubclass(exc_class, HTTPException):
+                return exc_class, exc_class.code
+            else:
+                return exc_class, None
 
 
 
