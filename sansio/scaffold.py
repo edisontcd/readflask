@@ -893,32 +893,120 @@ def _path_is_relative_to(path: pathlib.PurePath, base: str) -> bool:
         return False
 
 
+# 查找包含指定包或模块的路径。
+# 参数 import_name 是一个字符串，表示要查找的包或模块的名称。
+def _find_package_path(import_name: str) -> str:
+    """Find the path that contains the package or module."""
+    # 将 import_name 按照第一个点分隔，提取出根模块名称 root_mod_name。
+    root_mod_name, _, _ = import_name.partition(".")
+
+    try:
+        # 查找根模块的规范。
+        root_spec = importlib.util.find_spec(root_mod_name)
+
+        if root_spec is None:
+            raise ValueError("not found")
+    # 如果捕获到 ImportError 或 ValueError，返回当前工作目录，表示模块未找到。
+    except (ImportError, ValueError):
+        # ImportError: the machinery told us it does not exist
+        # ValueError:
+        #    - the module name was invalid
+        #    - the module name is __main__
+        #    - we raised `ValueError` due to `root_spec` being `None`
+        # 如果发生这些异常，则返回当前工作目录 os.getcwd()，表示未找到模块或包。
+        return os.getcwd()
+
+    # 检查根模块是否有子模块的搜索位置，如果有，则继续处理。
+    if root_spec.submodule_search_locations:
+        # 如果模块的原始来源为 None 或 namespace，表示它是一个命名空间包。
+        if root_spec.origin is None or root_spec.origin == "namespace":
+            # namespace package
+            # 再次使用 find_spec 方法查找完整的包规范。
+            package_spec = importlib.util.find_spec(import_name)
+
+            # 如果找到包规范并且具有子模块搜索位置，继续处理。
+            if package_spec is not None and package_spec.submodule_search_locations:
+                # Pick the path in the namespace that contains the submodule.
+                package_path = pathlib.Path(
+                    # 获取所有子模块搜索位置的共同路径，并将其转换为 Path 对象。
+                    os.path.commonpath(package_spec.submodule_search_locations)
+                )
+                # 在根模块的子模块搜索位置中，找到与 package_path 相对的路径。
+                search_location = next(
+                    location
+                    for location in root_spec.submodule_search_locations
+                    if _path_is_relative_to(package_path, location)
+                )
+            else:
+                # Pick the first path.
+                # 如果未找到相对路径，则选择第一个子模块搜索位置。
+                search_location = root_spec.submodule_search_locations[0]
+
+            # 返回包含子模块的目录路径。
+            return os.path.dirname(search_location)
+        else:
+            # package with __init__.py
+            # 如果模块有 __init__.py，则返回包的上级目录路径。
+            return os.path.dirname(os.path.dirname(root_spec.origin))
+    else:
+        # module
+        # 如果没有子模块搜索位置，返回模块的目录路径。
+        return os.path.dirname(root_spec.origin)  # type: ignore[type-var, return-value]
 
 
+# 用于查找给定包的安装前缀和导入路径。
+# 能够区分系统安装和虚拟环境的情况，并处理不同操作系统的目录结构。
+def find_package(import_name: str) -> tuple[str | None, str]:
+    """Find the prefix that a package is installed under, and the path
+    that it would be imported from.
 
+    The prefix is the directory containing the standard directory
+    hierarchy (lib, bin, etc.). If the package is not installed to the
+    system (:attr:`sys.prefix`) or a virtualenv (``site-packages``),
+    ``None`` is returned.
 
+    The path is the entry in :attr:`sys.path` that contains the package
+    for import. If the package is not installed, it's assumed that the
+    package was imported from the current working directory.
+    """
+    # 使用 _find_package_path 函数查找给定包的路径，并将其存储在 package_path 变量中。
+    package_path = _find_package_path(import_name)
+    # 获取当前 Python 环境的前缀路径（如虚拟环境或全局安装路径），并将其转换为绝对路径。
+    py_prefix = os.path.abspath(sys.prefix)
 
+    # 函数检查 package_path 是否相对于 py_prefix。
+    # installed to the system
+    if _path_is_relative_to(pathlib.PurePath(package_path), py_prefix):
+        # 返回该前缀和包路径。
+        return py_prefix, package_path
 
+    # 将包路径分为其父目录 site_parent 和当前目录 site_folder。
+    site_parent, site_folder = os.path.split(package_path)
 
+    # installed to a virtualenv
+    # 如果当前目录为 site-packages（不区分大小写），表示包可能安装在虚拟环境中。
+    if site_folder.lower() == "site-packages":
+        # 将 site_parent 进一步分割为其父目录 parent 和当前目录 folder。
+        parent, folder = os.path.split(site_parent)
 
+        # 如果 folder 为 lib，表示包安装在 Windows 系统的标准目录结构中。
+        # Windows (prefix/lib/site-packages)
+        if folder.lower() == "lib":
+            # 返回虚拟环境的父目录和包路径。
+            return parent, package_path
 
+        # 如果 parent 的基本名称为 lib，表示包安装在 Unix 系统的标准目录结构中。
+        # Unix (prefix/lib/pythonX.Y/site-packages)
+        if os.path.basename(parent).lower() == "lib":
+            # 返回 parent 的上级目录和包路径。
+            return os.path.dirname(parent), package_path
 
+        # 如果以上条件都不满足，则返回 site_parent 和包路径，表示包安装在非标准位置。
+        # something else (prefix/site-packages)
+        return site_parent, package_path
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    # 如果包没有安装到系统或虚拟环境中，返回 None 和包路径，表示包可能是从当前工作目录导入的。
+    # not installed
+    return None, package_path
 
 
