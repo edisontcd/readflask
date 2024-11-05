@@ -346,6 +346,8 @@ class Blueprint(Scaffold):
             raise ValueError("Cannot register a blueprint on itself")
         self._blueprints.append((blueprint, options))
 
+    # 用于将当前蓝图注册到 Flask 应用中，并且处理一些与蓝图相关的配置、URL 路由、CLI 命令等。
+    # 它在 Flask.register_blueprint 方法中被调用。
     def register(self, app: App, options: dict[str, t.Any]) -> None:
         """Called by :meth:`Flask.register_blueprint` to register all
         views and callbacks registered on the blueprint with the
@@ -375,10 +377,13 @@ class Blueprint(Scaffold):
             blueprint to be registered multiple times with unique names
             for ``url_for``.
         """
+        # name_prefix 是从 options 获取的，而 self_name 是蓝图本身的名称。
+        # 最终形成的 name 是蓝图的完整注册名称。
         name_prefix = options.get("name_prefix", "")
         self_name = options.get("name", self.name)
         name = f"{name_prefix}.{self_name}".lstrip(".")
 
+        # 如果蓝图的名称已经在应用中注册，抛出 ValueError 异常，提示蓝图名称冲突。
         if name in app.blueprints:
             bp_desc = "this" if app.blueprints[name] is self else "a different"
             existing_at = f" '{name}'" if self_name != name else ""
@@ -389,13 +394,18 @@ class Blueprint(Scaffold):
                 f" provide a unique name."
             )
 
+        # 表示蓝图是否是第一次注册到应用。
         first_bp_registration = not any(bp is self for bp in app.blueprints.values())
+        # 表示蓝图的名称是否是第一次注册。
         first_name_registration = name not in app.blueprints
 
+        # 将蓝图添加到应用的 blueprints 字典中。
         app.blueprints[name] = self
+        # 标记为已注册。
         self._got_registered_once = True
         state = self.make_setup_state(app, options, first_bp_registration)
 
+        # 如果蓝图具有静态文件夹，则为静态文件夹创建 URL 规则，允许 Flask 应用访问该蓝图的静态资源。
         if self.has_static_folder:
             state.add_url_rule(
                 f"{self.static_url_path}/<path:filename>",
@@ -403,13 +413,17 @@ class Blueprint(Scaffold):
                 endpoint="static",
             )
 
+        # 如果蓝图是第一次注册，或者第一次注册该名称的蓝图，
+        # 则会合并父蓝图的函数（例如视图函数和路由规则）。
         # Merge blueprint data into parent.
         if first_bp_registration or first_name_registration:
             self._merge_blueprint_funcs(app, name)
 
+        # 执行所有延迟注册的回调函数，确保它们在蓝图注册后被正确执行。
         for deferred in self.deferred_functions:
             deferred(state)
 
+        # 如果蓝图定义了 CLI 命令，则根据配置的 cli_group 将其注册到 Flask 应用的 CLI 中。
         cli_resolved_group = options.get("cli_group", self.cli_group)
 
         if self.cli.commands:
@@ -422,6 +436,8 @@ class Blueprint(Scaffold):
                 self.cli.name = cli_resolved_group
                 app.cli.add_command(self.cli)
 
+        # 遍历当前蓝图的所有嵌套蓝图（即子蓝图），并为每个子蓝图配置 URL 前缀、子域等信息，
+        # 最终递归调用 register 方法注册它们。
         for blueprint, bp_options in self._blueprints:
             bp_options = bp_options.copy()
             bp_url_prefix = bp_options.get("url_prefix")
@@ -452,17 +468,34 @@ class Blueprint(Scaffold):
             bp_options["name_prefix"] = name
             blueprint.register(app, bp_options)
 
+
+    # 将当前蓝图的各种设置（如错误处理、视图函数、请求钩子等）合并到 Flask 应用中。
+    # self 是蓝图实例，app 是应用实例，name 是当前蓝图的名称。
     def _merge_blueprint_funcs(self, app: App, name: str) -> None:
+        # 将蓝图的某些字典（如请求钩子、上下文处理器等）合并到应用中。
         def extend(
+            # 蓝图中的字典，包含需要合并的值。键是 AppOrBlueprintKey，值是列表类型的函数。
             bp_dict: dict[ft.AppOrBlueprintKey, list[t.Any]],
+            # 应用中的目标字典，蓝图的值将被添加到这个字典中。
             parent_dict: dict[ft.AppOrBlueprintKey, list[t.Any]],
         ) -> None:
+            # 遍历蓝图字典中的每个键值对。
             for key, values in bp_dict.items():
+                # 如果 key 为 None（即空值），则将 key 设置为蓝图的 name。
+                # 如果 key 不为 None，则给它加上蓝图的名称前缀 name，
+                # 形成如 blueprint_name.some_key 的结构。
                 key = name if key is None else f"{name}.{key}"
+                # 将蓝图中的 values（通常是函数或回调）添加到应用中的 parent_dict 中，合并到目标字典。
                 parent_dict[key].extend(values)
 
+        # 遍历蓝图的错误处理器字典 error_handler_spec。
+        # 其中 key 是错误码（如 404），value 是与之对应的处理函数。
         for key, value in self.error_handler_spec.items():
+            # 如果 key 是 None，则将其设置为蓝图的名称；否则，给 key 添加蓝图名称作为前缀，
+            # 形成如 blueprint_name.404 的结构。
             key = name if key is None else f"{name}.{key}"
+            # 将原有的错误处理器 value 转换为 defaultdict，确保如果没有指定处理函数时，
+            # 字典会返回一个空的字典。
             value = defaultdict(
                 dict,
                 {
@@ -470,19 +503,29 @@ class Blueprint(Scaffold):
                     for code, code_values in value.items()
                 },
             )
+            # 将修改后的错误处理器字典 value 注册到应用的 error_handler_spec 中，
+            # 确保应用能够正确处理错误。
             app.error_handler_spec[key] = value
 
+        # 遍历蓝图的 view_functions 字典，其中 endpoint 是路由的名称，func 是对应的视图函数。
         for endpoint, func in self.view_functions.items():
+            # 将蓝图中的视图函数添加到应用的 view_functions 字典中。
             app.view_functions[endpoint] = func
 
+        # 蓝图中注册的 before_request 钩子。
         extend(self.before_request_funcs, app.before_request_funcs)
+        # 蓝图中注册的 after_request 钩子。
         extend(self.after_request_funcs, app.after_request_funcs)
+        # 蓝图中注册的 teardown_request 钩子。
         extend(
             self.teardown_request_funcs,
             app.teardown_request_funcs,
         )
+        # 蓝图中注册的 URL 默认函数。
         extend(self.url_default_functions, app.url_default_functions)
+        # 蓝图中注册的 URL 值预处理函数。
         extend(self.url_value_preprocessors, app.url_value_preprocessors)
+        # 蓝图中注册的模板上下文处理器。
         extend(self.template_context_processors, app.template_context_processors)
 
     @setupmethod
