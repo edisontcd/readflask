@@ -528,7 +528,9 @@ class Blueprint(Scaffold):
         # 蓝图中注册的模板上下文处理器。
         extend(self.template_context_processors, app.template_context_processors)
 
-    @setupmethod
+    # 用于注册 URL 路由规则。用于将 URL 路径与特定的视图函数进行绑定，
+    # 使得应用能够通过指定的 URL 路径来访问相应的视图。
+    @setupmethod #意味着此方法不会立即执行，而是在 Blueprint 被注册到应用时执行。
     def add_url_rule(
         self,
         rule: str,
@@ -543,12 +545,15 @@ class Blueprint(Scaffold):
         The URL rule is prefixed with the blueprint's URL prefix. The endpoint name,
         used with :func:`url_for`, is prefixed with the blueprint's name.
         """
+        # 检查 endpoint 参数是否包含 . 字符。
         if endpoint and "." in endpoint:
             raise ValueError("'endpoint' may not contain a dot '.' character.")
 
+        # 检查传入的视图函数是否存在，并且检查视图函数的名称是否包含 . 字符。
         if view_func and hasattr(view_func, "__name__") and "." in view_func.__name__:
             raise ValueError("'view_func' name may not contain a dot '.' character.")
 
+        # 将注册 URL 路由的操作包裹在一个 lambda 函数中，确保它在 Blueprint 完成注册后执行。
         self.record(
             lambda s: s.add_url_rule(
                 rule,
@@ -559,6 +564,8 @@ class Blueprint(Scaffold):
             )
         )
 
+    # 用于注册模板过滤器（template filter）。
+    # 模板过滤器可以在 Jinja2 模板中使用，对模板中的数据进行转换或处理。
     @setupmethod
     def app_template_filter(
         self, name: str | None = None
@@ -576,6 +583,8 @@ class Blueprint(Scaffold):
 
         return decorator
 
+    # 用于注册一个模板过滤器。这个方法的作用是将一个模板过滤器函数注册到应用的 Jinja2 环境中，
+    # 使得该过滤器在所有模板中可用。
     @setupmethod
     def add_app_template_filter(
         self, f: ft.TemplateFilterCallable, name: str | None = None
@@ -593,6 +602,8 @@ class Blueprint(Scaffold):
 
         self.record_once(register_template)
 
+    # 用于注册一个模板测试（template test）。
+    # 模板测试是在 Jinja2 模板中使用的类似于模板过滤器的功能，允许在模板中使用自定义的测试方法。
     @setupmethod
     def app_template_test(
         self, name: str | None = None
@@ -612,6 +623,8 @@ class Blueprint(Scaffold):
 
         return decorator
 
+    # 用于注册模板测试（template test）。模板测试与模板过滤器类似，
+    # 它们是自定义的可在 Jinja2 模板中使用的测试方法，允许在模板中进行自定义的逻辑判断。
     @setupmethod
     def add_app_template_test(
         self, f: ft.TemplateTestCallable, name: str | None = None
@@ -631,6 +644,8 @@ class Blueprint(Scaffold):
 
         self.record_once(register_template)
 
+    # 用于将一个 Python 函数注册为 Jinja 模板的全局函数。
+    # 这样这个函数就可以在模板中作为全局变量访问。
     @setupmethod
     def app_template_global(
         self, name: str | None = None
@@ -650,6 +665,8 @@ class Blueprint(Scaffold):
 
         return decorator
 
+    # 这是一个方法，用于注册一个全局变量到 Jinja 模板环境。
+    # 该方法并不直接作为装饰器使用，而是作为注册机制。
     @setupmethod
     def add_app_template_global(
         self, f: ft.TemplateGlobalCallable, name: str | None = None
@@ -669,16 +686,19 @@ class Blueprint(Scaffold):
 
         self.record_once(register_template)
 
+    # 为应用注册一个“请求前钩子”（request before hook），但它与 Flask 中的 before_request 有一些不同。
     @setupmethod
     def before_app_request(self, f: T_before_request) -> T_before_request:
         """Like :meth:`before_request`, but before every request, not only those handled
         by the blueprint. Equivalent to :meth:`.Flask.before_request`.
         """
+        # 确保钩子函数只会被注册一次。
         self.record_once(
             lambda s: s.app.before_request_funcs.setdefault(None, []).append(f)
         )
         return f
 
+    # 注册一个应用级的请求后钩子（request after hook），并确保在每次请求结束后调用该钩子。
     @setupmethod
     def after_app_request(self, f: T_after_request) -> T_after_request:
         """Like :meth:`after_request`, but after every request, not only those handled
@@ -689,6 +709,7 @@ class Blueprint(Scaffold):
         )
         return f
 
+    # 注册一个应用级的请求清理钩子（request teardown hook），并确保在每次请求结束后调用该钩子。
     @setupmethod
     def teardown_app_request(self, f: T_teardown) -> T_teardown:
         """Like :meth:`teardown_request`, but after every request, not only those
@@ -699,6 +720,8 @@ class Blueprint(Scaffold):
         )
         return f
 
+    # 注册一个应用级的上下文处理器（context processor），
+    # 使得它能够为每个模板渲染提供共享的上下文数据，而不仅仅是蓝图中定义的视图。
     @setupmethod
     def app_context_processor(
         self, f: T_template_context_processor
@@ -711,6 +734,8 @@ class Blueprint(Scaffold):
         )
         return f
 
+    # 注册一个应用级别的错误处理器，处理所有请求中发生的错误，而不仅仅是蓝图内处理的错误。
+    # 它等效于 Flask 中的 errorhandler 方法，但适用于整个应用，而不仅仅是某个蓝图。
     @setupmethod
     def app_errorhandler(
         self, code: type[Exception] | int
@@ -728,6 +753,7 @@ class Blueprint(Scaffold):
 
         return decorator
 
+    # 注册了一个 URL 值处理器，用于在处理每个请求时，执行特定的处理逻辑。
     @setupmethod
     def app_url_value_preprocessor(
         self, f: T_url_value_preprocessor
@@ -740,6 +766,7 @@ class Blueprint(Scaffold):
         )
         return f
 
+    # 用于注册 URL 默认值函数，作用是为每个请求设置默认的 URL 参数值。
     @setupmethod
     def app_url_defaults(self, f: T_url_defaults) -> T_url_defaults:
         """Like :meth:`url_defaults`, but for every request, not only those handled by
