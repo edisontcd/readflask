@@ -310,19 +310,31 @@ class App(Scaffold):
     # 返回响应的类，通常是 Response。
     response_class: type[Response]
 
+    # Flask 类的初始化方法，用于创建一个新的 Flask 应用实例。
     def __init__(
         self,
+        # 应用包的名称
         import_name: str,
+        # 用于设置静态文件的 URL 路径。
         static_url_path: str | None = None,
+        # 指定静态文件的目录位置，默认值为 static。
         static_folder: str | os.PathLike[str] | None = "static",
+        # 指定静态文件所在的主机名。
         static_host: str | None = None,
+        # 设置是否在路由规则中启用主机名匹配。
         host_matching: bool = False,
+        # 设置是否启用子域名匹配。
         subdomain_matching: bool = False,
+        # 指定模板文件所在的目录。
         template_folder: str | os.PathLike[str] | None = "templates",
+        # 用于设置实例路径，默认是相对于应用包的 'instance' 目录。
         instance_path: str | None = None,
+        # 如果设置为 True，则配置文件路径将相对于实例路径，而不是应用根路径。
         instance_relative_config: bool = False,
+        # 用于手动设置根路径。
         root_path: str | None = None,
     ) -> None:
+        # 通过 super() 调用了父类 Scaffold 的 __init__ 方法，并传递了一些参数。
         super().__init__(
             import_name=import_name,
             static_folder=static_folder,
