@@ -456,6 +456,8 @@ class App(Scaffold):
         # 录应用是否已经处理过至少一个请求。
         self._got_first_request = False
 
+    # 方法名前面加下划线通常表示这是一个私有方法。
+    # 用于检查 Flask 应用程序是否已经处理过请求。
     def _check_setup_finished(self, f_name: str) -> None:
         if self._got_first_request:
             raise AssertionError(
@@ -468,6 +470,9 @@ class App(Scaffold):
                 " running it."
             )
 
+    # @property：将方法转换为属性，@cached_property：在 @property 基础上进一步优化，
+    # 使方法的结果在首次计算后缓存起来，后续访问时直接返回缓存的结果，而不再重复计算。
+    # 提供应用的名称，通常用于调试或显示应用信息。
     @cached_property
     def name(self) -> str:  # type: ignore
         """The name of the application.  This is usually the import name
@@ -478,13 +483,20 @@ class App(Scaffold):
 
         .. versionadded:: 0.8
         """
+        # 当 Flask 应用直接作为主程序运行（即 __name__ == "__main__"）时，
+        # import_name 将被设置为 "__main__"，这种情况下，name 应该返回运行文件的名称，
+        # 而不是 "__main__"。
         if self.import_name == "__main__":
+            # sys.modules["__main__"] 是当前运行脚本的模块对象，通过 getattr 获取该模块的
+            # __file__ 属性，来获取文件路径。
             fn: str | None = getattr(sys.modules["__main__"], "__file__", None)
             if fn is None:
                 return "__main__"
+            # 从文件路径中提取文件名并去掉扩展名。
             return os.path.splitext(os.path.basename(fn))[0]
         return self.import_name
 
+    # 缓存了一个配置好的 Logger 实例，便于应用记录日志信息。
     @cached_property
     def logger(self) -> logging.Logger:
         """A standard Python :class:`~logging.Logger` for the app, with
@@ -512,6 +524,8 @@ class App(Scaffold):
         """
         return create_logger(self)
 
+    # Flask 应用的 Jinja 环境，通过 @cached_property 缓存。
+    # 在第一次访问时创建，以确保应用的 Jinja 配置在初始化时应用。
     @cached_property
     def jinja_env(self) -> Environment:
         """The Jinja environment used to load templates.
@@ -522,6 +536,8 @@ class App(Scaffold):
         """
         return self.create_jinja_environment()
 
+    # 一个接口方法，要求子类提供实现。
+    # 抛出 NotImplementedError 强制子类实现该方法。
     def create_jinja_environment(self) -> Environment:
         raise NotImplementedError()
 
@@ -1008,20 +1024,5 @@ class App(Scaffold):
             raise
 
         raise error
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
