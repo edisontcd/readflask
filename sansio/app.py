@@ -164,14 +164,12 @@ class App(Scaffold):
     #: Defaults to :class:`werkzeug.exceptions.Aborter`.
     #:
     #: .. versionadded:: 2.2
-
     # 处理 HTTP 错误的类，默认为 Aborter，由 flask.abort 使用。
     aborter_class = Aborter
 
     #: The class that is used for the Jinja environment.
     #:
     #: .. versionadded:: 0.11
-
     # Flask 使用的 Jinja 环境类，默认为 Environment。
     jinja_environment = Environment
 
@@ -189,7 +187,6 @@ class App(Scaffold):
     #: flask.g object is now application context scoped.
     #:
     #: .. versionadded:: 0.10
-
     # 用于 flask.g 的类，默认是 _AppCtxGlobals。
     # 可以扩展 flask.g 来存储额外的属性，或者提供自定义的行为。
     app_ctx_globals_class = _AppCtxGlobals
@@ -203,7 +200,6 @@ class App(Scaffold):
     #: 2. Access to config values through attributes in addition to keys.
     #:
     #: .. versionadded:: 0.11
-
     # 应用的配置类，默认是 Config，负责读取和管理应用的配置。
     config_class = Config
 
@@ -217,7 +213,6 @@ class App(Scaffold):
     #:
     #: This attribute can also be configured from the config with the
     #: ``TESTING`` configuration key.  Defaults to ``False``.
-
     # 测试模式的开关。如果为 True，启用测试模式，允许某些扩展和 Flask 本身的额外调试功能。
     testing = ConfigAttribute[bool]("TESTING")
 
@@ -227,7 +222,6 @@ class App(Scaffold):
     #:
     #: This attribute can also be configured from the config with the
     #: :data:`SECRET_KEY` configuration key. Defaults to ``None``.
-    
     # 用于签名和加密 cookies 等的密钥。必须设置为复杂的随机值。
     secret_key = ConfigAttribute[t.Union[str, bytes, None]]("SECRET_KEY")
 
@@ -238,7 +232,6 @@ class App(Scaffold):
     #: This attribute can also be configured from the config with the
     #: ``PERMANENT_SESSION_LIFETIME`` configuration key.  Defaults to
     #: ``timedelta(days=31)``
-    
     # 永久会话的过期时间，默认是 timedelta(days=31)，即大约 31 天。
     permanent_session_lifetime = ConfigAttribute[timedelta](
         "PERMANENT_SESSION_LIFETIME",
@@ -267,7 +260,6 @@ class App(Scaffold):
     #:     This is a ``dict`` instead of an ``ImmutableDict`` to allow
     #:     easier configuration.
     #:
-    
     # 用于配置 Jinja 环境的选项。
     jinja_options: dict[str, t.Any] = {}
 
@@ -275,7 +267,6 @@ class App(Scaffold):
     #: :meth:`add_url_rule`.  Defaults to :class:`werkzeug.routing.Rule`.
     #:
     #: .. versionadded:: 0.7
-    
     # 用于创建 URL 规则的类，默认是 Rule。
     url_rule_class = Rule
 
@@ -283,7 +274,6 @@ class App(Scaffold):
     #: configuration parameters. Defaults to :class:`werkzeug.routing.Map`.
     #:
     #: .. versionadded:: 1.1.0
-    
     # URL 映射表的类，默认是 Map。
     url_map_class = Map
 
@@ -291,7 +281,6 @@ class App(Scaffold):
     #: client class. Defaults to :class:`~flask.testing.FlaskClient`.
     #:
     #: .. versionadded:: 0.7
-
     # 用于测试客户端的类，默认是 FlaskClient。
     test_client_class: type[FlaskClient] | None = None
 
@@ -301,7 +290,6 @@ class App(Scaffold):
     #: Flask app object as the first argument.
     #:
     #: .. versionadded:: 1.0
-
     # 用于测试 CLI 命令的类，默认是 FlaskCliRunner。
     test_cli_runner_class: type[FlaskCliRunner] | None = None
 
@@ -343,8 +331,11 @@ class App(Scaffold):
             root_path=root_path,
         )
 
+        # 如果 instance_path 未提供（即为 None），Flask 会自动调用
+        # self.auto_find_instance_path() 方法来确定实例路径。
         if instance_path is None:
             instance_path = self.auto_find_instance_path()
+        # 如果 instance_path 是相对路径，就会引发错误。
         elif not os.path.isabs(instance_path):
             raise ValueError(
                 "If an instance path is provided it must be absolute."
@@ -354,11 +345,13 @@ class App(Scaffold):
         #: Holds the path to the instance folder.
         #:
         #: .. versionadded:: 0.8
+        # 保存实例文件夹的路径。
         self.instance_path = instance_path
 
         #: The configuration dictionary as :class:`Config`.  This behaves
         #: exactly like a regular dictionary but supports additional methods
         #: to load a config from files.
+        # 用来存储应用的各种配置（如 DEBUG、SECRET_KEY）。
         self.config = self.make_config(instance_relative_config)
 
         #: An instance of :attr:`aborter_class` created by
@@ -367,8 +360,10 @@ class App(Scaffold):
         #:
         #: .. versionadded:: 2.2
         #:     Moved from ``flask.abort``, which calls this object.
+        # abort 方法使用的 Aborter 实例，用于引发 HTTP 错误。
         self.aborter = self.make_aborter()
 
+        # 处理 JSON 请求和响应的提供者。
         self.json: JSONProvider = self.json_provider_class(self)
         """Provides access to JSON methods. Functions in ``flask.json``
         will call methods on this provider when the application context
@@ -393,6 +388,7 @@ class App(Scaffold):
         #: Otherwise, its return value is returned by ``url_for``.
         #:
         #: .. versionadded:: 0.9
+        # 存储处理 URL 生成错误的函数列表。
         self.url_build_error_handlers: list[
             t.Callable[[Exception, str, dict[str, t.Any]], str]
         ] = []
@@ -403,12 +399,14 @@ class App(Scaffold):
         #: from databases.
         #:
         #: .. versionadded:: 0.9
+        # 存储在应用上下文销毁时调用的函数。
         self.teardown_appcontext_funcs: list[ft.TeardownCallable] = []
 
         #: A list of shell context processor functions that should be run
         #: when a shell context is created.
         #:
         #: .. versionadded:: 0.11
+        # 存储在创建 Shell 上下文时要运行的处理器函数。
         self.shell_context_processors: list[ft.ShellContextProcessorCallable] = []
 
         #: Maps registered blueprint names to blueprint objects. The
@@ -417,6 +415,7 @@ class App(Scaffold):
         #: not track how often they were attached.
         #:
         #: .. versionadded:: 0.7
+        # 存储应用中注册的蓝图。
         self.blueprints: dict[str, Blueprint] = {}
 
         #: a place where extensions can store application specific state.  For
@@ -428,6 +427,7 @@ class App(Scaffold):
         #: ``'foo'``.
         #:
         #: .. versionadded:: 0.7
+        # 存储扩展的状态。
         self.extensions: dict[str, t.Any] = {}
 
         #: The :class:`~werkzeug.routing.Map` for this instance.  You can use
@@ -445,12 +445,15 @@ class App(Scaffold):
         #:
         #:    app = Flask(__name__)
         #:    app.url_map.converters['list'] = ListConverter
+        # 存储应用的 URL 映射表。
         self.url_map = self.url_map_class(host_matching=host_matching)
 
+        # 是否启用子域名匹配。
         self.subdomain_matching = subdomain_matching
 
         # tracks internally if the application already handled at least one
         # request.
+        # 录应用是否已经处理过至少一个请求。
         self._got_first_request = False
 
     def _check_setup_finished(self, f_name: str) -> None:
