@@ -541,6 +541,7 @@ class App(Scaffold):
     def create_jinja_environment(self) -> Environment:
         raise NotImplementedError()
 
+    # 根据应用的根路径和实例路径来初始化配置。
     def make_config(self, instance_relative: bool = False) -> Config:
         """Used to create the config attribute by the Flask constructor.
         The `instance_relative` parameter is passed in from the constructor
@@ -550,13 +551,21 @@ class App(Scaffold):
 
         .. versionadded:: 0.8
         """
+        # 默认设置根路径为应用的 root_path。
         root_path = self.root_path
+        # 如果 instance_relative 为 True，使用实例路径作为根路径。
+        # 参数控制配置路径是否相对于实例路径（instance_path）而不是应用的根路径（root_path）。
         if instance_relative:
             root_path = self.instance_path
+        # 创建一个默认配置字典，继承默认配置（self.default_config）并添加 DEBUG 设置。
         defaults = dict(self.default_config)
+        # 根据当前的调试标志来设置 DEBUG。
         defaults["DEBUG"] = get_debug_flag()
         return self.config_class(root_path, defaults)
 
+    # 用于创建并返回一个 Aborter 类的实例。
+    # Aborter 负责处理 HTTP 错误，并在需要时通过 flask.abort() 触发错误响应。
+    # 默认情况下，Flask 使用 werkzeug.exceptions.Aborter 作为 Aborter 类，但它允许用户自定义错误处理类。
     def make_aborter(self) -> Aborter:
         """Create the object to assign to :attr:`aborter`. That object
         is called by :func:`flask.abort` to raise HTTP errors, and can
@@ -567,8 +576,11 @@ class App(Scaffold):
 
         .. versionadded:: 2.2
         """
+        # 创建并返回一个 Aborter 实例。
         return self.aborter_class()
 
+    # 用于在没有提供实例路径的情况下自动计算实例路径，它通过检查包的前缀路径来决定实例路径的位置。
+    # 实例路径是 Flask 应用用来存放配置文件、数据库文件或其他实例特定文件的文件夹。
     def auto_find_instance_path(self) -> str:
         """Tries to locate the instance path if it was not provided to the
         constructor of the application class.  It will basically calculate
@@ -577,11 +589,18 @@ class App(Scaffold):
 
         .. versionadded:: 0.8
         """
+        # 解包赋值（unpacking assignment），prefix, package_path 是对返回值的解包操作，
+        # 它告诉 Python 将返回的元组中的第一个值赋给 prefix 变量，将第二个值赋给 package_path 变量。
+        # find_package(self.import_name) 是 Flask 中用来查找包的路径的函数。它返回两个值：
+        # prefix: 包的前缀路径，通常是包含该包的目录路径。
+        # package_path: 包的实际路径，可能是一个文件路径或者目录路径。
         prefix, package_path = find_package(self.import_name)
         if prefix is None:
             return os.path.join(package_path, "instance")
         return os.path.join(prefix, "var", f"{self.name}-instance")
 
+    # 创建一个 Jinja2 环境的全局加载器（DispatchingJinjaLoader）。
+    # 这个加载器用于处理 Jinja2 模板的加载，且能够区分应用本身和单独的蓝图（Blueprints）的模板加载需求。
     def create_global_jinja_loader(self) -> DispatchingJinjaLoader:
         """Creates the loader for the Jinja2 environment.  Can be used to
         override just the loader and keeping the rest unchanged.  It's
