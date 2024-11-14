@@ -614,6 +614,9 @@ class App(Scaffold):
         """
         return DispatchingJinjaLoader(self)
 
+    # 用于选择是否启用 Jinja2 模板的 自动转义 (autoescaping) 功能的方法。
+    # 自动转义是防止跨站脚本攻击 (XSS) 的重要措施，它会自动转义 HTML、XML 等格式中的特殊字符，
+    # 确保它们不会被错误地解释为 HTML 或 JavaScript 代码。
     def select_jinja_autoescape(self, filename: str) -> bool:
         """Returns ``True`` if autoescaping should be active for the given
         template name. If no template name is given, returns `True`.
@@ -625,8 +628,10 @@ class App(Scaffold):
         """
         if filename is None:
             return True
+        # 如果是其中之一，则返回 True，启用自动转义；
         return filename.endswith((".html", ".htm", ".xml", ".xhtml", ".svg"))
 
+    # debug 属性是 Flask 中用于判断是否启用调试模式的属性。
     @property
     def debug(self) -> bool:
         """Whether debug mode is enabled. When using ``flask run`` to start the
@@ -640,13 +645,16 @@ class App(Scaffold):
         """
         return self.config["DEBUG"]  # type: ignore[no-any-return]
 
+    # 定义了一个 setter 方法，让你能够在修改 debug 属性时自动更新相关配置。
     @debug.setter
     def debug(self, value: bool) -> None:
         self.config["DEBUG"] = value
 
+        # 更新 jinja_env.auto_reload，以便根据调试模式的开启与否调整模板的自动重载行为。
         if self.config["TEMPLATES_AUTO_RELOAD"] is None:
             self.jinja_env.auto_reload = value
 
+    # 用于将蓝图注册到应用中的方法，支持各种配置选项，如 URL 前缀、子域名、URL 默认值等。
     @setupmethod
     def register_blueprint(self, blueprint: Blueprint, **options: t.Any) -> None:
         """Register a :class:`~flask.Blueprint` on the application. Keyword
@@ -675,6 +683,7 @@ class App(Scaffold):
         """
         blueprint.register(self, options)
 
+    # 返回应用中所有已注册蓝图的迭代器，顺序与蓝图注册顺序一致。
     def iter_blueprints(self) -> t.ValuesView[Blueprint]:
         """Iterates over all blueprints by the order they were registered.
 
