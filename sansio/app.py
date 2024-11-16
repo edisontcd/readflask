@@ -691,15 +691,20 @@ class App(Scaffold):
         """
         return self.blueprints.values()
 
+    # Flask 路由系统的核心方法，通过它可以将特定的 URL 规则和视图函数关联起来。
     @setupmethod
     def add_url_rule(
         self,
-        rule: str,
-        endpoint: str | None = None,
-        view_func: ft.RouteCallable | None = None,
+        rule: str, # 表示 URL 路由规则，例如 /home 或 /api/<id>。
+        endpoint: str | None = None, # 指定此路由的终点名称，默认为视图函数的名称。
+        # 关联到路由规则的视图函数。它是实际处理该路由请求的逻辑。
+        view_func: ft.RouteCallable | None = None, 
+        # 决定是否自动为该路由提供 OPTIONS 方法支持。
         provide_automatic_options: bool | None = None,
+        # 其他传递给路由规则的附加选项，例如 methods 表示支持的 HTTP 方法。
         **options: t.Any,
     ) -> None:
+        # 如果没有显式提供 endpoint，会使用视图函数的名称作为默认终点。
         if endpoint is None:
             endpoint = _endpoint_from_view_func(view_func)  # type: ignore
         options["endpoint"] = endpoint
@@ -708,25 +713,32 @@ class App(Scaffold):
         # if the methods are not given and the view_func object knows its
         # methods we can use that instead.  If neither exists, we go with
         # a tuple of only ``GET`` as default.
+        # 从 options 中提取 methods 参数，如果未指定：检查视图函数是否定义了 methods 属性；
+        # 否则默认仅支持 GET 方法。
         if methods is None:
             methods = getattr(view_func, "methods", None) or ("GET",)
+        # 如果 methods 是字符串而非列表，抛出错误；
         if isinstance(methods, str):
             raise TypeError(
                 "Allowed methods must be a list of strings, for"
                 ' example: @app.route(..., methods=["POST"])'
             )
+        # 将 methods 转换为大写的集合（set），便于后续操作。
         methods = {item.upper() for item in methods}
 
+        # 检查视图函数是否声明了 required_methods 属性，强制添加到 methods。
         # Methods that should always be added
         required_methods: set[str] = set(getattr(view_func, "required_methods", ()))
 
         # starting with Flask 0.8 the view_func object can disable and
         # force-enable the automatic options handling.
+        # 如果未显式设置 provide_automatic_options，从视图函数的属性中获取该值。
         if provide_automatic_options is None:
             provide_automatic_options = getattr(
                 view_func, "provide_automatic_options", None
             )
 
+        # 如果未设置且 PROVIDE_AUTOMATIC_OPTIONS 配置为 True，自动启用 OPTIONS 方法支持。
         if provide_automatic_options is None:
             if "OPTIONS" not in methods and self.config["PROVIDE_AUTOMATIC_OPTIONS"]:
                 provide_automatic_options = True
@@ -735,22 +747,30 @@ class App(Scaffold):
                 provide_automatic_options = False
 
         # Add the required methods now.
+        # 将 required_methods 添加到 methods 集合中。
         methods |= required_methods
 
+        # 使用 self.url_rule_class（通常是 werkzeug.routing.Rule）创建路由规则对象；
         rule_obj = self.url_rule_class(rule, methods=methods, **options)
+        # 设置 provide_automatic_options 以处理 OPTIONS 请求。
         rule_obj.provide_automatic_options = provide_automatic_options  # type: ignore[attr-defined]
 
+        # 将创建的路由规则对象添加到应用的 url_map 中，url_map 是管理所有路由规则的核心数据结构。
         self.url_map.add(rule_obj)
+        # 如果提供了视图函数，检查是否已存在与该 endpoint 绑定的其他视图函数；
         if view_func is not None:
             old_func = self.view_functions.get(endpoint)
+            # 如果冲突（即终点名称已被其他视图函数使用），抛出异常；
             if old_func is not None and old_func != view_func:
                 raise AssertionError(
                     "View function mapping is overwriting an existing"
                     f" endpoint function: {endpoint}"
                 )
+            # 否则将视图函数绑定到 view_functions 字典中。
             self.view_functions[endpoint] = view_func
 
-    @setupmethod
+    # 用于将自定义的模板过滤器注册到 Flask 应用中。
+    @setupmethod # 标识该方法是一个设置方法，通常在应用启动时调用。
     def template_filter(
         self, name: str | None = None
     ) -> t.Callable[[T_template_filter], T_template_filter]:
@@ -767,11 +787,14 @@ class App(Scaffold):
         """
 
         def decorator(f: T_template_filter) -> T_template_filter:
+            # 将过滤器注册到 Flask 应用中。
             self.add_template_filter(f, name=name)
             return f
 
         return decorator
 
+    # 用于直接向 Flask 应用的 Jinja2 环境中注册自定义模板过滤器。
+    # 它的作用与 template_filter 类似，但不是以装饰器的形式，而是直接调用方法。
     @setupmethod
     def add_template_filter(
         self, f: ft.TemplateFilterCallable, name: str | None = None
@@ -784,6 +807,7 @@ class App(Scaffold):
         """
         self.jinja_env.filters[name or f.__name__] = f
 
+    # 用于注册自定义的模板测试（template test）。
     @setupmethod
     def template_test(
         self, name: str | None = None
@@ -813,6 +837,7 @@ class App(Scaffold):
 
         return decorator
 
+    # 用于直接向 Flask 应用的 Jinja2 环境中注册自定义模板测试（template test）。
     @setupmethod
     def add_template_test(
         self, f: ft.TemplateTestCallable, name: str | None = None
