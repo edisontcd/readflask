@@ -852,6 +852,7 @@ class App(Scaffold):
         """
         self.jinja_env.tests[name or f.__name__] = f
 
+    # 用于注册模板全局函数，方便在 Jinja2 模板中调用。
     @setupmethod
     def template_global(
         self, name: str | None = None
@@ -876,6 +877,7 @@ class App(Scaffold):
 
         return decorator
 
+    # 将函数注册为模板全局函数，使得函数可以在 Jinja2 模板中直接调用。
     @setupmethod
     def add_template_global(
         self, f: ft.TemplateGlobalCallable, name: str | None = None
@@ -890,6 +892,7 @@ class App(Scaffold):
         """
         self.jinja_env.globals[name or f.__name__] = f
 
+    # 方法用于注册回调函数，在应用上下文销毁时执行清理操作。
     @setupmethod
     def teardown_appcontext(self, f: T_teardown) -> T_teardown:
         """Registers a function to be called when the application
@@ -921,9 +924,11 @@ class App(Scaffold):
 
         .. versionadded:: 0.9
         """
+        # self.teardown_appcontext_funcs 是一个列表，用于存储所有注册的销毁回调函数。
         self.teardown_appcontext_funcs.append(f)
         return f
 
+    # 用于注册一个函数，该函数返回的字典将变量或对象添加到 Flask Shell 上下文中。
     @setupmethod
     def shell_context_processor(
         self, f: T_shell_context_processor
@@ -935,6 +940,7 @@ class App(Scaffold):
         self.shell_context_processors.append(f)
         return f
 
+    # Flask 中一个内部方法，用于按优先级顺序查找合适的错误处理函数。
     def _find_error_handler(
         self, e: Exception, blueprints: list[str]
     ) -> ft.ErrorHandlerCallable | None:
@@ -943,23 +949,33 @@ class App(Scaffold):
         blueprint handler for an exception class, app handler for an exception
         class, or ``None`` if a suitable handler is not found.
         """
+        # 提取异常的类（exc_class）和 HTTP 状态码（code，如果有）。
         exc_class, code = self._get_exc_class_and_code(type(e))
+        # 将蓝图名称列表 blueprints 解包，并在末尾追加 None。
         names = (*blueprints, None)
 
+        # 如果 code 存在，先尝试使用 code 查找处理函数，
+        # 然后尝试不带状态码的处理函数（异常类级别的处理器）。
+        # 如果 code 不存在，只查找基于异常类的处理器。
         for c in (code, None) if code is not None else (None,):
             for name in names:
+                # 根据蓝图名称和状态码获取对应的处理器映射。
                 handler_map = self.error_handler_spec[name][c]
 
+                # 如果当前处理器映射为空，跳过。
                 if not handler_map:
                     continue
 
+                # 使用异常类的 方法解析顺序（MRO），即从当前类开始，逐层检查父类。
                 for cls in exc_class.__mro__:
                     handler = handler_map.get(cls)
 
+                    # 如果找到处理函数，立即返回。
                     if handler is not None:
                         return handler
         return None
 
+    # 用于检查是否需要捕获（trap）由视图函数引发的 HTTP 异常（HTTPException）。
     def trap_http_exception(self, e: Exception) -> bool:
         """Checks if an HTTP exception should be trapped or not.  By default
         this will return ``False`` for all exceptions except for a bad request
@@ -980,8 +996,14 @@ class App(Scaffold):
         if self.config["TRAP_HTTP_EXCEPTIONS"]:
             return True
 
+        # 个独立的配置项，专门控制是否捕获 BadRequest 类异常
+        # （例如 400 Bad Request 或其子类 BadRequestKeyError）。
         trap_bad_request = self.config["TRAP_BAD_REQUEST_ERRORS"]
 
+        # 如果 TRAP_BAD_REQUEST_ERRORS 未设置（即为 None），
+        # 且当前应用处于调试模式（self.debug 为 True）。
+        # 且异常是 BadRequestKeyError 类型（通常由访问表单或查询字符串中缺失的键引发）。
+        # 返回 True，捕获该异常。
         # if unset, trap key errors in debug mode
         if (
             trap_bad_request is None
@@ -990,11 +1012,15 @@ class App(Scaffold):
         ):
             return True
 
+        # 如果 TRAP_BAD_REQUEST_ERRORS 为 True：
+        # 检查异常是否是 BadRequest 类或其子类。
+        # 如果是，返回 True，捕获该异常。
         if trap_bad_request:
             return isinstance(e, BadRequest)
 
         return False
 
+    # 用于判断在应用的 teardown（清理）过程中是否应该忽略某个异常。
     def should_ignore_error(self, error: BaseException | None) -> bool:
         """This is called to figure out if an error should be ignored
         or not as far as the teardown system is concerned.  If this
@@ -1005,6 +1031,7 @@ class App(Scaffold):
         """
         return False
 
+    # 用于生成重定向响应，支持动态 URL 和自定义状态码。
     def redirect(self, location: str, code: int = 302) -> BaseResponse:
         """Create a redirect response object.
 
@@ -1017,12 +1044,15 @@ class App(Scaffold):
         .. versionadded:: 2.2
             Moved from ``flask.redirect``, which calls this method.
         """
+        # _wz_redirect 是 Werkzeug 提供的内部工具函数，用于创建重定向响应。
         return _wz_redirect(
-            location,
-            code=code,
+            location, # 目标 URL。
+            code=code, # HTTP 状态码。
+            # 使用当前应用的 response_class（通常是 Flask 的响应类）。
             Response=self.response_class,  # type: ignore[arg-type]
         )
 
+    # Flask 中的一个内部方法，用于在 URL 生成过程中为参数字典注入默认值。
     def inject_url_defaults(self, endpoint: str, values: dict[str, t.Any]) -> None:
         """Injects the URL defaults for the given endpoint directly into
         the values dictionary passed.  This is used internally and
@@ -1030,20 +1060,28 @@ class App(Scaffold):
 
         .. versionadded:: 0.7
         """
+        # 初始化 names 为包含 None 的元组。
         names: t.Iterable[str | None] = (None,)
 
         # url_for may be called outside a request context, parse the
         # passed endpoint instead of using request.blueprints.
+        # 如果 endpoint 包含 .，说明该端点属于某个蓝图。
+        # 例如，"admin.dashboard" 表示蓝图 admin 的 dashboard 端点。
         if "." in endpoint:
+            # 将 None 和分解后的蓝图名称连接起来，形成按优先级排列的搜索顺序。
             names = chain(
+                # 调用 _split_blueprint_path 将蓝图路径分解成各级蓝图的名称。
+                # 使用 reversed 确保从具体蓝图到全局依次注入默认值。
                 names, reversed(_split_blueprint_path(endpoint.rpartition(".")[0]))
             )
 
+        # 遍历 names，从具体蓝图到全局依次查找对应的默认值函数。
         for name in names:
             if name in self.url_default_functions:
                 for func in self.url_default_functions[name]:
                     func(endpoint, values)
 
+    # 通过调用已注册的处理函数，尝试处理 URL 构建异常。
     def handle_url_build_error(
         self, error: BuildError, endpoint: str, values: dict[str, t.Any]
     ) -> str:
@@ -1061,21 +1099,28 @@ class App(Scaffold):
         :param endpoint: The endpoint being built.
         :param values: The keyword arguments passed to ``url_for``.
         """
+        # 遍历所有注册的 URL 构建错误处理函数。
         for handler in self.url_build_error_handlers:
+            # 尝试执行当前的错误处理函数。
             try:
                 rv = handler(error, endpoint, values)
+            # 如果函数抛出了 BuildError，捕获异常并继续尝试下一个处理函数。
             except BuildError as e:
                 # make error available outside except block
                 error = e
             else:
+                # 如果函数返回非 None 的值，返回该值（处理成功）。
                 if rv is not None:
                     return rv
 
         # Re-raise if called with an active exception, otherwise raise
         # the passed in exception.
+        # 检查 error 是否是当前上下文中的活动异常，使用 sys.exc_info()[1] 获取当前抛出的异常。
+        # 如果相同，重新抛出异常（保留原始堆栈信息）。
         if error is sys.exc_info()[1]:
             raise
 
+        # 如果没有活动异常，或者处理函数都失败，抛出传入的 error。
         raise error
 
 
